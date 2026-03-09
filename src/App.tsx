@@ -7,8 +7,8 @@ import {
   Trash2,
   GripVertical,
   X,
-  LayoutGrid,
   Plus,
+  Bot,
 } from "lucide-react";
 import {
   DndContext,
@@ -28,11 +28,13 @@ import {
   useSortable,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import AgentLauncher from "./components/AgentLauncher";
 
 // =======================
 // 配置区：工具注册表
 // =======================
 const INITIAL_TOOLS = [
+  { id: "agent-launcher", name: "Agent 启动", icon: Bot, singleton: true },
   { id: "adb", name: "ADB WiFi 配对", icon: Smartphone },
   { id: "url-encode", name: "URL 编解码", icon: LinkIcon },
 ];
@@ -51,7 +53,7 @@ interface ToolInstance {
 function AdbTool() {
   return (
     <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 h-full">
-      <div className="bg-white p-6 md:p-8 rounded-2xl border border-gray-100 shadow-[0_2px_10px_-4px_rgba(0,0,0,0.05)] h-fit">
+      <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-[0_2px_10px_-4px_rgba(0,0,0,0.05)] h-fit">
         <div className="flex items-center gap-3 mb-6">
           <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center text-blue-500">
             <Smartphone size={20} />
@@ -226,11 +228,13 @@ function SortableTab({
       {...listeners}
       onClick={onClick}
       onContextMenu={(e) => onContextMenu(e, inst.instanceId)}
-      className={`group flex items-center gap-2 px-3 pt-1.5 min-w-[120px] max-w-[200px] border border-b-0 rounded-t-lg cursor-pointer transition-colors select-none ${
+      className={`group relative flex items-center gap-2 px-3 h-9 min-w-[130px] max-w-[220px] rounded-t-xl cursor-pointer transition-all select-none border border-b-0 ${
         isActive
-          ? "pb-[7px] bg-[#f8f9fc] border-gray-200 text-blue-600 font-medium"
-          : "pb-1.5 bg-gray-50/50 border-transparent text-gray-500 hover:bg-gray-100 hover:border-gray-200 shadow-[inset_0_-1px_0_rgba(0,0,0,0.05)]"
-      } ${isDragging ? "opacity-50" : "opacity-100"}`}
+          ? "bg-white border-gray-300 text-blue-700 font-medium shadow-[0_2px_8px_-6px_rgba(0,0,0,0.25)]"
+          : "bg-gray-100 border-gray-200 text-gray-600 hover:bg-gray-50"
+      } ${isDragging ? "opacity-50" : "opacity-100"} ${
+        isActive ? "z-10 -mb-[1px]" : "z-0"
+      }`}
     >
       <span className="truncate flex-1 text-xs select-none pointer-events-none">{inst.title}</span>
       <button
@@ -239,13 +243,13 @@ function SortableTab({
           onClose(e, inst.instanceId);
         }}
         onPointerDown={(e) => e.stopPropagation()}
-        className={`p-1 rounded-md transition-colors ${
-          isActive
-            ? "text-blue-400 hover:bg-blue-100 hover:text-blue-600"
-            : "opacity-0 group-hover:opacity-100 text-gray-400 hover:bg-gray-200 hover:text-gray-700"
-        }`}
-        title="关闭"
-      >
+          className={`p-1 rounded-md transition-colors ${
+            isActive
+              ? "text-gray-500 hover:bg-gray-100 hover:text-gray-800"
+              : "opacity-0 group-hover:opacity-100 text-gray-400 hover:bg-gray-200 hover:text-gray-700"
+          }`}
+          title="关闭"
+        >
         <X size={12} />
       </button>
     </div>
@@ -257,11 +261,13 @@ function SortableTab({
 // =======================
 function App() {
   const [tools, setTools] = useState(INITIAL_TOOLS);
-  const [activeToolId, setActiveToolId] = useState<string>("adb");
+  const [activeToolId, setActiveToolId] = useState<string>("agent-launcher");
   const [instances, setInstances] = useState<ToolInstance[]>([
+    { instanceId: "inst_init_agent", toolId: "agent-launcher", title: "Agent 启动" },
     { instanceId: "inst_init_adb", toolId: "adb", title: "ADB WiFi 配对" }
   ]);
   const [activeTabIds, setActiveTabIds] = useState<Record<string, string>>({
+    "agent-launcher": "inst_init_agent",
     adb: "inst_init_adb"
   });
 
@@ -329,6 +335,9 @@ function App() {
 
   const handleNewTab = () => {
     const toolConfig = tools.find((t) => t.id === activeToolId);
+    // 如果是单例模式，禁止新建标签页
+    if (toolConfig?.singleton) return;
+
     const existingCount = instances.filter((i) => i.toolId === activeToolId).length;
     const title = existingCount === 0 ? (toolConfig?.name || "新标签页") : `${toolConfig?.name} ${existingCount + 1}`;
     
@@ -394,6 +403,7 @@ function App() {
   const currentToolInstances = instances.filter((i) => i.toolId === activeToolId);
   const currentActiveTabId = activeTabIds[activeToolId];
   const activeToolConfig = tools.find((t) => t.id === activeToolId);
+  const isSingleton = activeToolConfig?.singleton === true;
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-white text-gray-800 font-sans relative">
@@ -470,36 +480,42 @@ function App() {
           </div>
         </header>
 
-        {/* 专属多标签页导航栏 (Tool-Scoped Tab Bar) -> 变更为支持多行自适应且支持跨行拖拽算法 */}
-        <div className="bg-white/60 backdrop-blur-sm flex flex-wrap items-end px-2 border-b border-gray-200 shrink-0 gap-x-1 gap-y-1 select-none shadow-[0_2px_4px_-4px_rgba(0,0,0,0.05)] z-10 relative">
-          
-          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleTabDragEnd}>
-            <SortableContext items={currentToolInstances.map(i => i.instanceId)} strategy={rectSortingStrategy}>
-              {currentToolInstances.map((inst) => (
-                <SortableTab
-                  key={inst.instanceId}
-                  inst={inst}
-                  isActive={currentActiveTabId === inst.instanceId}
-                  onClick={() => setActiveTabIds((prev) => ({ ...prev, [activeToolId]: inst.instanceId }))}
-                  onClose={handleCloseTab}
-                  onContextMenu={handleContextMenu}
-                />
-              ))}
-            </SortableContext>
-          </DndContext>
-          
-          <button
-            onClick={handleNewTab}
-            className="mb-1 ml-1 p-1.5 text-gray-500 hover:bg-white hover:shadow-sm hover:text-gray-900 rounded-md transition-all border border-transparent hover:border-gray-200 active:scale-95 flex-shrink-0"
-            title={`新建 ${activeToolConfig?.name} 标签页`}
-          >
-            <Plus size={16} />
-          </button>
-        </div>
+        {/* 专属多标签页导航栏 (单例工具如 Agent启动 隐藏此栏) */}
+        {!isSingleton && (
+          <div className="bg-[#f1f3f4] flex flex-wrap items-end px-2 pt-2 border-b border-gray-200 shrink-0 gap-x-0 gap-y-0 select-none z-10 relative">
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleTabDragEnd}>
+              <SortableContext items={currentToolInstances.map(i => i.instanceId)} strategy={rectSortingStrategy}>
+                {currentToolInstances.map((inst) => (
+                  <SortableTab
+                    key={inst.instanceId}
+                    inst={inst}
+                    isActive={currentActiveTabId === inst.instanceId}
+                    onClick={() => setActiveTabIds((prev) => ({ ...prev, [activeToolId]: inst.instanceId }))}
+                    onClose={handleCloseTab}
+                    onContextMenu={handleContextMenu}
+                  />
+                ))}
+              </SortableContext>
+            </DndContext>
+            
+            <button
+              onClick={handleNewTab}
+              className="ml-0.5 h-8 w-8 inline-flex items-center justify-center text-gray-500 hover:bg-white hover:text-gray-900 rounded-md transition-all border border-transparent hover:border-gray-200 active:scale-95 flex-shrink-0"
+              title={`新建 ${activeToolConfig?.name} 标签页`}
+            >
+              <Plus size={16} />
+            </button>
+          </div>
+        )}
 
         {/* 标签页内容区 */}
         <div className="flex-1 relative overflow-hidden">
-          {currentToolInstances.length === 0 ? (
+          {isSingleton ? (
+            // === 单例模式：直接渲染组件 ===
+            <div className="absolute inset-0 z-10">
+              {activeToolId === "agent-launcher" && <AgentLauncher />}
+            </div>
+          ) : currentToolInstances.length === 0 ? (
             <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-400 gap-4">
               <div className="w-16 h-16 rounded-2xl bg-white flex items-center justify-center border border-gray-200 border-dashed shadow-sm">
                 {activeToolConfig && <activeToolConfig.icon size={24} className="text-gray-300" />}
@@ -521,7 +537,7 @@ function App() {
               return (
                 <div
                   key={inst.instanceId}
-                  className={`absolute inset-0 p-6 md:p-8 overflow-auto transition-opacity duration-200 ${
+                  className={`absolute inset-0 p-4 overflow-auto transition-opacity duration-200 ${
                     isCurrentlyVisible ? "block opacity-100 z-10" : "hidden opacity-0 z-0"
                   }`}
                 >
