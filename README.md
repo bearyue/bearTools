@@ -35,6 +35,7 @@
   - 支持右键菜单：关闭其他、关闭所有。
   - **无缝状态保活**：隐藏 Tab 状态不丢失。
 - [x] **工具 UI 占位**：已画好 `ADB WiFi 配对` 和 `URL 编解码` 的第一版静态 UI，包含控制台输出模拟区域。
+- [x] **Agent 启动工具**：支持目录/指令/分组管理，可一键打开终端并执行预设指令。
 
 ---
 
@@ -50,7 +51,7 @@
    - 增加设备列表状态轮询。
 
 ### Phase 3: 工程化与架构升级
-1. **组件拆分**：随着工具增加，目前的 `App.tsx` 体积会膨胀。需将 `AdbTool`、`UrlTool` 以及 `SortableTab` 拆分到独立的组件文件中（如 `src/tools/adb/index.tsx`）。
+1. **组件拆分**：随着工具增加，目前的 `App.tsx` 体积会膨胀。需将 `AdbTool`、`UrlTool` 以及 `SortableTab` 拆分到独立的组件文件中（如 `src/tools/adb/index.tsx`）。`AgentLauncher` 已先行拆分到 `src/components/AgentLauncher.tsx`。
 2. **状态持久化**：将 `instances` (已打开的标签页) 和 `tools` (左侧排序结果) 同步到 `localStorage` 或 Tauri Store 中，实现重启后恢复上次工作状态。
 3. **新工具扩充**：JSON 格式化、时间戳转换、Base64 加解密等常用工具。
 
