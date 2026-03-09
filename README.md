@@ -1,77 +1,78 @@
-# bearTools
+# bearTools 🐻
 
-## 框架选型（第一阶段结论）
+一个专为开发者打造的现代化跨平台桌面工具箱。采用“多实例标签页”架构，支持工具无损后台保活，体验顺滑如原生。
 
-### 推荐方案：**Tauri 2 + React + TypeScript + TailwindCSS + shadcn/ui**
-
-这是针对你的目标（mac/win 双端、界面优美、高扩展性、本地命令能力）最均衡的一套：
-
-- **跨平台桌面**：Tauri 原生支持 macOS / Windows（后续也可扩 Linux）。
-- **本地能力强**：通过 Tauri Rust 后端可安全执行本地命令（如 `adb`、终端脚本等）。
-- **界面美观且效率高**：React 生态 + Tailwind + shadcn/ui，能快速做出现代化界面。
-- **体积与性能更优**：相对 Electron，Tauri 包体更小、内存占用通常更低。
-- **高扩展性**：可采用“工具插件化”架构，每个工具独立注册、独立视图、独立能力声明。
+![Architecture](https://img.shields.io/badge/Architecture-Tauri%202.0-blue) ![Frontend](https://img.shields.io/badge/Frontend-React%2019%20+%20Tailwind%20V4-61DAFB) ![Language](https://img.shields.io/badge/Language-TypeScript%20+%20Rust-orange)
 
 ---
 
-## 为什么不优先 Electron / Flutter
+## 🏗️ 核心架构与 UI 设计
 
-- **Electron**：生态成熟，但资源占用偏高；你目前目标偏“私人高效工具箱”，Tauri 更轻。
-- **Flutter Desktop**：UI 很强，但前端生态（Web 工具类、组件库、插件市场）对你这个场景不如 React 直接。
+本项目在 UI/UX 层面采用了 **浏览器级多标签页 (Multi-Tab)** 架构，设计逻辑如下：
+
+1. **配置化工具注册**：
+   - 所有工具模块均在 `src/App.tsx` 中的 `INITIAL_TOOLS` 数组内统一注册。
+   - 左侧菜单动态读取配置，**支持拖拽排序**。
+2. **工具专属上下文 (Tool-Scoped Context)**：
+   - 点击左侧菜单**不会**直接打开新页面，而是切换“工具大类上下文”。
+   - 顶部标签栏显示的是当前工具下所有**已实例化的 Tab**。
+3. **多实例与后台保活 (State Preservation)**：
+   - 支持同一工具开启多个实例（如：`URL 编解码 1`，`URL 编解码 2`）。
+   - **核心机制**：切换标签页或切换左侧工具大类时，被隐藏的 Tab **不会被卸载 (Unmount)**，而是通过 `display: none` (`hidden` Tailwind 类) 在后台保活。所有未保存的文本、滚动条位置、网络请求状态均会完美保留。
 
 ---
 
-## 建议的项目结构（可直接按此开工）
+## 🚀 已完成功能 (Phase 1)
 
-```txt
-bearTools/
-  src/                         # React 前端
-    app/
-    pages/
-    components/
-    tools/                     # 每个工具一个目录（插件化）
-      adb/
-      url-encode/
-  src-tauri/                   # Tauri + Rust
-    src/
-      commands/                # 对前端暴露的本地命令接口
-      tools/                   # 工具后端能力封装（adb、shell 等）
+- [x] **基础框架搭建**：基于 Tauri 2.0 + React 19 + TypeScript + TailwindCSS v4。
+- [x] **现代化 UI 骨架**：
+  - 左侧边栏 (工具列表) + 右侧工作区 (多标签管理 + 独立工具组件)。
+  - 极细边框、柔和阴影、类 SaaS 仪表盘质感。
+- [x] **左侧菜单拖拽排序**：基于 `@dnd-kit` 实现。
+- [x] **顶部 Tab 高级管理**：
+  - 支持 `+` 按钮新建当前工具实例。
+  - 支持跨行水平拖拽排序 (`rectSortingStrategy`)。
+  - 支持右键菜单：关闭其他、关闭所有。
+  - **无缝状态保活**：隐藏 Tab 状态不丢失。
+- [x] **工具 UI 占位**：已画好 `ADB WiFi 配对` 和 `URL 编解码` 的第一版静态 UI，包含控制台输出模拟区域。
+
+---
+
+## 🛠️ 后续开发规划 (Phase 2 & 3)
+
+### Phase 2: 工具核心功能实现
+1. **URL 编解码工具 (纯前端)**：
+   - 监听文本框输入，实现 Encode/Decode 按钮逻辑。
+   - 接入系统剪贴板实现“复制结果”。
+2. **ADB WiFi 配对工具 (Rust 桥接)**：
+   - 编写 Tauri Command (`src-tauri/src/lib.rs`)，封装 Rust 底层调用系统 `adb pair` 和 `adb connect` 的能力。
+   - 前端接收并流式输出命令行的 `stdout` / `stderr` 到黑色的控制台面板区。
+   - 增加设备列表状态轮询。
+
+### Phase 3: 工程化与架构升级
+1. **组件拆分**：随着工具增加，目前的 `App.tsx` 体积会膨胀。需将 `AdbTool`、`UrlTool` 以及 `SortableTab` 拆分到独立的组件文件中（如 `src/tools/adb/index.tsx`）。
+2. **状态持久化**：将 `instances` (已打开的标签页) 和 `tools` (左侧排序结果) 同步到 `localStorage` 或 Tauri Store 中，实现重启后恢复上次工作状态。
+3. **新工具扩充**：JSON 格式化、时间戳转换、Base64 加解密等常用工具。
+
+---
+
+## ⚠️ 开发注意事项 (给 AI 代理的 Prompt)
+
+1. **Tab 保活原则**：在拆分组件或重构时，**严禁**使用条件渲染 `{activeTab === id && <Tool />}` 来切换 Tab，这会导致组件销毁！必须继续沿用 `className={isActive ? 'block' : 'hidden'}` 的 CSS 控制方案。
+2. **Tauri 通信**：调用底层能力时，请在 `src-tauri/tauri.conf.json` 中配置好对应的权限 (Capabilities)，且 Tauri 2.0 中 IPC 调用语法为 `@tauri-apps/api/core` 中的 `invoke`。
+3. **Tailwind V4**：本项目使用 TailwindCSS v4，不再需要 `tailwind.config.js`，全局配置和主题变量写在 `src/index.css` 的 `@theme` 中。
+
+---
+
+## 💻 本地运行
+
+```bash
+# 安装依赖
+npm install
+
+# 启动桌面端开发服务
+npm run tauri dev
+
+# 打包发布 (Windows -> .exe / .msi)
+npm run tauri build
 ```
-
----
-
-## 首批工具落地建议
-
-### 1) 本地命令调用（adb / 终端）
-
-- 前端提供“命令模板 + 参数输入 + 输出面板”。
-- 后端通过白名单命令执行：
-  - 例如只允许 `adb`、`git`、`python` 等指定命令。
-- 支持：
-  - 标准输出/错误流展示；
-  - 历史命令记录；
-  - 一键复制结果。
-
-### 2) 简单工具（URL 编码/解码）
-
-- 这类逻辑可先在前端本地完成（即时响应）。
-- 后续可统一包装为“工具插件”，保持一致的 UI 和配置方式。
-
----
-
-## 扩展性设计要点
-
-- 定义统一 `ToolManifest`：
-  - `id` / `name` / `category` / `permissions` / `entryComponent`。
-- 前端根据 manifest 自动生成侧边栏和工具路由。
-- 后端按权限能力分层：
-  - `shell.exec`、`fs.read`、`network.http` 等。
-- 默认最小权限原则：工具只拿到声明过的能力。
-
----
-
-## 下一步（你确认后我可以继续细化）
-
-1. 初始化脚手架（Tauri 2 + React + TS + Tailwind + shadcn/ui）。
-2. 落地插件注册机制（先实现 `adb` 与 `url-encode` 两个工具插件）。
-3. 做第一版 UI（左侧工具栏 + 右侧工作区 + 命令输出面板）。
