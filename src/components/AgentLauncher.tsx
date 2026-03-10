@@ -50,6 +50,7 @@ interface AgentDirectory {
   path: string;
   groupId: string | null;
   lastUsedAt: number;
+  order?: number; // 用于拖拽排序
 }
 
 const DEFAULT_COMMANDS: AgentCommand[] = [
@@ -153,7 +154,8 @@ export default function AgentLauncher() {
         alias: data.alias || '未命名',
         path: data.path || '',
         groupId: data.groupId || (groups.length > 0 ? groups[0].id : null),
-        lastUsedAt: Date.now()
+        lastUsedAt: Date.now(),
+        order: Date.now() % 1000 // 初始排序值
       }]);
     }
     setDirModal({ open: false, data: null });
@@ -211,12 +213,43 @@ export default function AgentLauncher() {
     }
   };
 
-  // 排序：先按最近使用降序
-  const sortedDirs = [...directories].sort((a, b) => b.lastUsedAt - a.lastUsedAt);
-  // 过滤：按组
-  const filteredDirs = activeGroupId === null 
-    ? sortedDirs 
-    : sortedDirs.filter(d => d.groupId === activeGroupId);
+  const handleDirectoryDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (over && active.id !== over.id) {
+      setDirectories((items) => {
+        const oldIndex = items.findIndex((i) => i.id === active.id);
+        const newIndex = items.findIndex((i) => i.id === over.id);
+        const newItems = arrayMove(items, oldIndex, newIndex);
+        // 更新排序后的 order 值
+        return newItems.map((item, index) => ({ ...item, order: index }));
+      });
+    }
+  };
+
+  // 排序逻辑：
+  // - "全部/最近使用"：按 lastUsedAt 降序，不支持拖拽
+  // - 各分组内：按 order 升序（拖拽排序），没有 order 的按 lastUsedAt 升序（创建时间）
+  const getSortedDirs = () => {
+    if (activeGroupId === null) {
+      // 全部/最近使用：按最近使用时间降序
+      return [...directories].sort((a, b) => b.lastUsedAt - a.lastUsedAt);
+    } else {
+      // 分组内：按 order 排序（支持拖拽），没有 order 的放后面按 lastUsedAt 排
+      return [...directories]
+        .filter(d => d.groupId === activeGroupId)
+        .sort((a, b) => {
+          const aOrder = a.order ?? Number.MAX_SAFE_INTEGER;
+          const bOrder = b.order ?? Number.MAX_SAFE_INTEGER;
+          if (aOrder !== bOrder) {
+            return aOrder - bOrder;
+          }
+          // order 相同时按创建时间排
+          return a.lastUsedAt - b.lastUsedAt;
+        });
+    }
+  };
+
+  const sortedDirs = getSortedDirs();
 
   return (
     <div className="relative flex flex-col h-full bg-[#f8f9fc] w-full max-w-[1200px] mx-auto p-4 overflow-hidden">
@@ -278,80 +311,155 @@ export default function AgentLauncher() {
 
       {/* 列表区 */}
       <div className="flex-1 overflow-y-auto no-scrollbar pb-6">
-        <div className="grid grid-cols-1 gap-4">
-          {filteredDirs.map((dir) => (
-            <div
-              key={dir.id}
-              className="group bg-white rounded-2xl px-5 py-3 border border-gray-100 shadow-[0_2px_10px_-4px_rgba(0,0,0,0.05)] hover:border-blue-200 hover:shadow-md transition-all"
-            >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={() => handleOpenDirectory(dir)}
-                    className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-50 to-indigo-50 flex items-center justify-center text-blue-500 shrink-0 group-hover:scale-105 transition-transform hover:from-blue-100 hover:to-indigo-100 hover:text-blue-600 cursor-pointer"
-                    title="打开该目录"
-                    aria-label={`打开目录 ${dir.alias}`}
-                  >
-                    <FolderOpen size={20} />
-                  </button>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <h3 className="text-base font-bold text-gray-900">{dir.alias}</h3>
-                      <span className="text-[11px] px-2 py-0.5 bg-gray-100 text-gray-500 rounded-md font-mono">
-                        {groups.find(g => g.id === dir.groupId)?.name || '未分组'}
-                      </span>
+        {activeGroupId === null ? (
+          /* "全部/最近使用" tab：不支持拖拽，按最近使用时间排序 */
+          <div className="grid grid-cols-1 gap-4">
+            {sortedDirs.map((dir) => (
+              <div
+                key={dir.id}
+                className="group bg-white rounded-2xl px-5 py-3 border border-gray-100 shadow-[0_2px_10px_-4px_rgba(0,0,0,0.05)] hover:border-blue-200 hover:shadow-md transition-all"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => handleOpenDirectory(dir)}
+                      className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-50 to-indigo-50 flex items-center justify-center text-blue-500 shrink-0 group-hover:scale-105 transition-transform hover:from-blue-100 hover:to-indigo-100 hover:text-blue-600 cursor-pointer"
+                      title="打开该目录"
+                      aria-label={`打开目录 ${dir.alias}`}
+                    >
+                      <FolderOpen size={20} />
+                    </button>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-base font-bold text-gray-900">{dir.alias}</h3>
+                        <span className="text-[11px] px-2 py-0.5 bg-gray-100 text-gray-500 rounded-md font-mono">
+                          {groups.find(g => g.id === dir.groupId)?.name || '未分组'}
+                        </span>
+                      </div>
+                      <p className="text-xs text-gray-500 mt-0.5 flex items-center gap-1.5 font-mono break-all line-clamp-1" title={dir.path}>
+                        <Terminal size={12} className="opacity-60" />
+                        {dir.path}
+                      </p>
                     </div>
-                    <p className="text-xs text-gray-500 mt-0.5 flex items-center gap-1.5 font-mono break-all line-clamp-1" title={dir.path}>
-                      <Terminal size={12} className="opacity-60" />
-                      {dir.path}
-                    </p>
+                  </div>
+
+                  {/* 卡片右上角操作：编辑/删除 */}
+                  <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button onClick={() => setDirModal({ open: true, data: dir })} className="p-1.5 text-gray-400 hover:text-blue-600 transition-colors">
+                      <Edit size={14} />
+                    </button>
+                    <button onClick={() => deleteDirectory(dir.id)} className="p-1.5 text-gray-400 hover:text-red-500 transition-colors">
+                      <Trash2 size={14} />
+                    </button>
                   </div>
                 </div>
 
-                {/* 卡片右上角操作：编辑/删除 */}
-                <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
-                  <button onClick={() => setDirModal({ open: true, data: dir })} className="p-1.5 text-gray-400 hover:text-blue-600 transition-colors">
-                    <Edit size={14} />
-                  </button>
-                  <button onClick={() => deleteDirectory(dir.id)} className="p-1.5 text-gray-400 hover:text-red-500 transition-colors">
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-              </div>
-
-              {/* 指令快捷按钮 */}
-              <div className="mt-2.5 pt-2.5 border-t border-gray-50 flex flex-wrap gap-2">
-                <button
-                  onClick={() => handleOpenTerminal(dir, null)}
-                  className="flex items-center gap-2 px-4 py-1.5 rounded-xl text-sm font-medium transition-all bg-gray-50 text-gray-700 hover:bg-gray-100 border border-gray-200 active:scale-[0.98]"
-                >
-                  <Terminal size={14} className="text-gray-400" />
-                  终端
-                </button>
-                {commands.map((cmd) => (
+                {/* 指令快捷按钮 */}
+                <div className="mt-2.5 pt-2.5 border-t border-gray-50 flex flex-wrap gap-2">
                   <button
-                    key={cmd.id}
-                    onClick={() => handleOpenTerminal(dir, cmd)}
+                    onClick={() => handleOpenTerminal(dir, null)}
                     className="flex items-center gap-2 px-4 py-1.5 rounded-xl text-sm font-medium transition-all bg-gray-50 text-gray-700 hover:bg-gray-100 border border-gray-200 active:scale-[0.98]"
                   >
-                    <Sparkles size={14} className="text-gray-400" />
-                    {cmd.name}
+                    <Terminal size={14} className="text-gray-400" />
+                    终端
                   </button>
+                  {commands.map((cmd) => (
+                    <button
+                      key={cmd.id}
+                      onClick={() => handleOpenTerminal(dir, cmd)}
+                      className="flex items-center gap-2 px-4 py-1.5 rounded-xl text-sm font-medium transition-all bg-gray-50 text-gray-700 hover:bg-gray-100 border border-gray-200 active:scale-[0.98]"
+                    >
+                      <Sparkles size={14} className="text-gray-400" />
+                      {cmd.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          /* 分组 tab：支持拖拽排序 */
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDirectoryDragEnd}>
+            <SortableContext items={sortedDirs.map(d => d.id)} strategy={verticalListSortingStrategy}>
+              <div className="grid grid-cols-1 gap-4">
+                {sortedDirs.map((dir) => (
+                  <SortableDirItem key={dir.id} id={dir.id}>
+                    <div
+                      className="group bg-white rounded-2xl px-5 py-3 pl-12 border border-gray-100 shadow-[0_2px_10px_-4px_rgba(0,0,0,0.05)] hover:border-blue-200 hover:shadow-md transition-all"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <button
+                            type="button"
+                            onClick={() => handleOpenDirectory(dir)}
+                            className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-50 to-indigo-50 flex items-center justify-center text-blue-500 shrink-0 group-hover:scale-105 transition-transform hover:from-blue-100 hover:to-indigo-100 hover:text-blue-600 cursor-pointer"
+                            title="打开该目录"
+                            aria-label={`打开目录 ${dir.alias}`}
+                          >
+                            <FolderOpen size={20} />
+                          </button>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <h3 className="text-base font-bold text-gray-900">{dir.alias}</h3>
+                              <span className="text-[11px] px-2 py-0.5 bg-gray-100 text-gray-500 rounded-md font-mono">
+                                {groups.find(g => g.id === dir.groupId)?.name || '未分组'}
+                              </span>
+                            </div>
+                            <p className="text-xs text-gray-500 mt-0.5 flex items-center gap-1.5 font-mono break-all line-clamp-1" title={dir.path}>
+                              <Terminal size={12} className="opacity-60" />
+                              {dir.path}
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* 卡片右上角操作：编辑/删除 */}
+                        <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button onClick={() => setDirModal({ open: true, data: dir })} className="p-1.5 text-gray-400 hover:text-blue-600 transition-colors">
+                            <Edit size={14} />
+                          </button>
+                          <button onClick={() => deleteDirectory(dir.id)} className="p-1.5 text-gray-400 hover:text-red-500 transition-colors">
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* 指令快捷按钮 */}
+                      <div className="mt-2.5 pt-2.5 border-t border-gray-50 flex flex-wrap gap-2">
+                        <button
+                          onClick={() => handleOpenTerminal(dir, null)}
+                          className="flex items-center gap-2 px-4 py-1.5 rounded-xl text-sm font-medium transition-all bg-gray-50 text-gray-700 hover:bg-gray-100 border border-gray-200 active:scale-[0.98]"
+                        >
+                          <Terminal size={14} className="text-gray-400" />
+                          终端
+                        </button>
+                        {commands.map((cmd) => (
+                          <button
+                            key={cmd.id}
+                            onClick={() => handleOpenTerminal(dir, cmd)}
+                            className="flex items-center gap-2 px-4 py-1.5 rounded-xl text-sm font-medium transition-all bg-gray-50 text-gray-700 hover:bg-gray-100 border border-gray-200 active:scale-[0.98]"
+                          >
+                            <Sparkles size={14} className="text-gray-400" />
+                            {cmd.name}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </SortableDirItem>
                 ))}
               </div>
-            </div>
-          ))}
+            </SortableContext>
+          </DndContext>
+        )}
 
-          {filteredDirs.length === 0 && (
-            <div className="text-center py-20 text-gray-400">
-              <div className="w-16 h-16 mx-auto bg-gray-50 rounded-2xl flex items-center justify-center mb-4">
-                <FolderOpen size={24} className="text-gray-300" />
-              </div>
-              <p>当前分组下暂无预设目录</p>
+        {sortedDirs.length === 0 && (
+          <div className="text-center py-20 text-gray-400">
+            <div className="w-16 h-16 mx-auto bg-gray-50 rounded-2xl flex items-center justify-center mb-4">
+              <FolderOpen size={24} className="text-gray-300" />
             </div>
-          )}
-        </div>
+            <p>当前分组下暂无预设目录</p>
+          </div>
+        )}
       </div>
 
       {/* ======================================================== */}
@@ -539,7 +647,7 @@ export default function AgentLauncher() {
   );
 }
 
-// === 辅助组件：可拖拽列表项 ===
+// === 辅助组件：可拖拽列表项（用于指令/分组） ===
 function SortableItem({ id, children }: { id: string; children: React.ReactNode }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id });
@@ -565,6 +673,37 @@ function SortableItem({ id, children }: { id: string; children: React.ReactNode 
         <GripVertical size={14} />
       </div>
       {children}
+    </div>
+  );
+}
+
+// === 辅助组件：可拖拽目录卡片 ===
+function SortableDirItem({ id, children }: { id: string; children: React.ReactNode }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+    useSortable({ id });
+
+  const style = {
+    transform: CSS.Translate.toString(transform),
+    transition,
+    zIndex: isDragging ? 50 : 0,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={`relative ${isDragging ? "opacity-50" : ""}`}
+    >
+      {children}
+      {/* 拖拽手柄 - 始终显示在卡片左侧 */}
+      <div
+        {...attributes}
+        {...listeners}
+        className="absolute left-2 top-1/2 -translate-y-1/2 cursor-grab active:cursor-grabbing p-1.5 rounded text-gray-300 hover:text-gray-500 transition-colors z-10"
+        title="拖拽排序"
+      >
+        <GripVertical size={18} />
+      </div>
     </div>
   );
 }
