@@ -130,6 +130,20 @@ export default function AgentLauncher() {
     }
   };
 
+  const handleOpenDirectory = async (dir: AgentDirectory) => {
+    if (!dir.path) {
+      alert("目录路径为空，无法打开文件夹。");
+      return;
+    }
+
+    try {
+      await invoke("open_directory", { path: dir.path });
+    } catch (error) {
+      console.error("Failed to open directory in file manager:", error);
+      alert(`打开文件夹失败: ${error}`);
+    }
+  };
+
   const saveDirectory = (data: Partial<AgentDirectory>) => {
     if (data.id) {
       setDirectories(prev => prev.map(d => d.id === data.id ? { ...d, ...data } as AgentDirectory : d));
@@ -272,9 +286,15 @@ export default function AgentLauncher() {
             >
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-50 to-indigo-50 flex items-center justify-center text-blue-500 shrink-0 group-hover:scale-105 transition-transform">
+                  <button
+                    type="button"
+                    onClick={() => handleOpenDirectory(dir)}
+                    className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-50 to-indigo-50 flex items-center justify-center text-blue-500 shrink-0 group-hover:scale-105 transition-transform hover:from-blue-100 hover:to-indigo-100 hover:text-blue-600 cursor-pointer"
+                    title="打开该目录"
+                    aria-label={`打开目录 ${dir.alias}`}
+                  >
                     <FolderOpen size={20} />
-                  </div>
+                  </button>
                   <div>
                     <div className="flex items-center gap-2">
                       <h3 className="text-base font-bold text-gray-900">{dir.alias}</h3>
