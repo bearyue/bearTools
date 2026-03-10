@@ -1754,15 +1754,17 @@ function App() {
         {/* 标签页内容区 */}
         <div className="flex-1 relative overflow-hidden">
           {isSingleton ? (
-            // === 单例模式：直接渲染组件 ===
-            <div className="absolute inset-0 z-10">
-              {activeToolId === "agent-launcher" && <AgentLauncher />}
-              {activeToolId === "adb" && (
+            // === 单例模式：使用 hidden 保活组件状态 ===
+            <>
+              <div className={`absolute inset-0 z-10 ${activeToolId === "agent-launcher" ? 'block' : 'hidden'}`}>
+                <AgentLauncher />
+              </div>
+              <div className={`absolute inset-0 z-10 ${activeToolId === "adb" ? 'block' : 'hidden'}`}>
                 <div className="absolute inset-0 p-4 overflow-auto">
                   <AdbTool />
                 </div>
-              )}
-            </div>
+              </div>
+            </>
           ) : currentToolInstances.length === 0 ? (
             <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-400 gap-4">
               <div className="w-16 h-16 rounded-2xl bg-white flex items-center justify-center border border-gray-200 border-dashed shadow-sm">
@@ -1780,20 +1782,15 @@ function App() {
               </div>
             </div>
           ) : (
-            instances.map((inst) => {
-              const isCurrentlyVisible = (inst.toolId === activeToolId) && (inst.instanceId === currentActiveTabId);
-              return (
-                <div
-                  key={inst.instanceId}
-                  className={`absolute inset-0 p-4 overflow-auto transition-opacity duration-200 ${
-                    isCurrentlyVisible ? "block opacity-100 z-10" : "hidden opacity-0 z-0"
-                  }`}
-                >
-                  {inst.toolId === "url-encode" && <UrlTool />}
-                  {inst.toolId === "unix-timestamp" && <UnixTimestampTool />}
-                </div>
-              );
-            })
+            currentToolInstances.map((inst) => (
+              <div
+                key={inst.instanceId}
+                className={`absolute inset-0 ${currentActiveTabId === inst.instanceId ? 'block' : 'hidden'}`}
+              >
+                {activeToolId === "url-encode" && <UrlTool />}
+                {activeToolId === "unix-timestamp" && <UnixTimestampTool />}
+              </div>
+            ))
           )}
         </div>
 
