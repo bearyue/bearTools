@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import {
   Smartphone,
   Link as LinkIcon,
+  Clock3,
   Play,
   Copy,
   Trash2,
@@ -41,6 +42,7 @@ const INITIAL_TOOLS = [
   { id: "agent-launcher", name: "Agent 启动", icon: Bot, singleton: true },
   { id: "adb", name: "ADB WiFi 配对", icon: Smartphone, singleton: true },
   { id: "url-encode", name: "URL 编解码", icon: LinkIcon },
+  { id: "unix-timestamp", name: "Unix 时间戳", icon: Clock3 },
 ];
 
 const generateInstanceId = () => `inst_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
@@ -67,6 +69,8 @@ interface AdbDevice {
 interface AdbDevicesResult extends AdbCommandResult {
   devices: AdbDevice[];
 }
+
+type TimestampUnit = "seconds" | "milliseconds";
 
 type ConsoleLineType = "info" | "command" | "success" | "error";
 
@@ -130,6 +134,48 @@ const serializeStoredIp = (value: SegmentedAddressValue) =>
 
 const hasAnyStoredIpValue = (value: SegmentedAddressValue) =>
   value.octets.some((octet) => octet.length > 0);
+
+const padTimeValue = (value: number) => value.toString().padStart(2, "0");
+
+const formatDateTime = (date: Date) =>
+  `${date.getFullYear()}-${padTimeValue(date.getMonth() + 1)}-${padTimeValue(date.getDate())} ${padTimeValue(date.getHours())}:${padTimeValue(date.getMinutes())}:${padTimeValue(date.getSeconds())}`;
+
+const parseDateTimeInput = (value: string) => {
+  const trimmed = value.trim();
+  const match = trimmed.match(
+    /^(\d{4})[/-](\d{1,2})[/-](\d{1,2})\s+(\d{1,2}):(\d{1,2}):(\d{1,2})$/
+  );
+
+  if (!match) {
+    return null;
+  }
+
+  const [, yearText, monthText, dayText, hourText, minuteText, secondText] = match;
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  const hour = Number(hourText);
+  const minute = Number(minuteText);
+  const second = Number(secondText);
+
+  const parsed = new Date(year, month - 1, day, hour, minute, second);
+
+  if (
+    parsed.getFullYear() !== year
+    || parsed.getMonth() !== month - 1
+    || parsed.getDate() !== day
+    || parsed.getHours() !== hour
+    || parsed.getMinutes() !== minute
+    || parsed.getSeconds() !== second
+  ) {
+    return null;
+  }
+
+  return parsed;
+};
+
+const convertDateToTimestamp = (date: Date, unit: TimestampUnit) =>
+  unit === "seconds" ? Math.floor(date.getTime() / 1000) : date.getTime();
 
 const getAddressValidationMessage = (value: SegmentedAddressValue, label: string) => {
   if (value.octets.some((octet) => octet.length === 0) || value.port.length === 0) {
@@ -883,35 +929,457 @@ function AdbTool() {
 }
 
 function UrlTool() {
+  const [input, setInput] = useState("");
+  const [result, setResult] = useState("");
+  const [resultLabel, setResultLabel] = useState<"编码结果" | "解码结果" | "转换结果">("转换结果");
+
+  const handleEncode = () => {
+    const nextResult = encodeURIComponent(input);
+    setResult(nextResult);
+    setResultLabel("编码结果");
+  };
+
+  const handleDecode = () => {
+    try {
+      const nextResult = decodeURIComponent(input);
+      setResult(nextResult);
+      setResultLabel("解码结果");
+    } catch (error) {
+      const message = `URL 解码失败：${String(error)}`;
+      setResult(message);
+      setResultLabel("转换结果");
+      alert(message);
+    }
+  };
+
+  const handleCopyResult = async () => {
+    if (!result) {
+      alert("当前没有可复制的结果。");
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(result);
+    } catch (error) {
+      alert(`复制失败：${String(error)}`);
+    }
+  };
+
+  const handleClearInput = () => {
+    setInput("");
+    setResult("");
+    setResultLabel("转换结果");
+  };
+
   return (
-    <div className="bg-white p-6 md:p-8 rounded-2xl border border-gray-100 shadow-[0_2px_10px_-4px_rgba(0,0,0,0.05)] h-full flex flex-col max-w-4xl">
-      <div className="flex items-center gap-3 mb-6">
-        <div className="w-10 h-10 rounded-xl bg-purple-50 flex items-center justify-center text-purple-500">
-          <LinkIcon size={20} />
+    <div className="h-full max-w-5xl">
+      <div className="bg-white p-6 md:p-8 rounded-2xl border border-gray-100 shadow-[0_2px_10px_-4px_rgba(0,0,0,0.05)] h-full flex flex-col gap-6 overflow-auto">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-purple-50 flex items-center justify-center text-purple-500">
+            <LinkIcon size={20} />
+          </div>
+          <div>
+            <h2 className="text-lg font-bold text-gray-900">URL 编解码</h2>
+            <p className="text-sm text-gray-500 mt-0.5">上方输入原始内容，下方查看转换结果</p>
+          </div>
         </div>
-        <div>
-          <h2 className="text-lg font-bold text-gray-900">文本输入</h2>
-          <p className="text-sm text-gray-500 mt-0.5">在下方输入需要进行转换的内容</p>
+
+        <div className="flex flex-col gap-5 flex-1 min-h-max">
+          <section className="flex flex-col min-h-0">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-3">
+              <div>
+                <h3 className="text-sm font-semibold text-gray-800">输入区域</h3>
+                <p className="text-xs text-gray-500 mt-1">输入待编码或解码的 URL / 文本</p>
+              </div>
+              <button
+                type="button"
+                onClick={handleClearInput}
+                className="inline-flex items-center justify-center gap-2 px-3 py-2 text-sm text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-xl transition-colors self-start sm:self-auto"
+              >
+                <Trash2 size={14} />
+                清空输入
+              </button>
+            </div>
+            <textarea
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="输入或粘贴内容..."
+              className="w-full min-h-[180px] p-4 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 transition-all placeholder:text-gray-400 resize-none"
+            ></textarea>
+          </section>
+
+          <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3 sm:gap-4">
+            <button
+              type="button"
+              onClick={handleEncode}
+              className="inline-flex items-center justify-center gap-2 px-6 py-2.5 bg-purple-600 text-white font-medium rounded-xl hover:bg-purple-700 transition-all shadow-sm shadow-purple-500/20 active:scale-[0.98]"
+            >
+              URL 编码
+            </button>
+            <button
+              type="button"
+              onClick={handleDecode}
+              className="inline-flex items-center justify-center gap-2 px-6 py-2.5 bg-white border border-gray-200 text-gray-700 font-medium rounded-xl hover:bg-gray-50 transition-all shadow-sm active:scale-[0.98]"
+            >
+              URL 解码
+            </button>
+            <button
+              type="button"
+              onClick={handleCopyResult}
+              className="inline-flex items-center justify-center gap-2 px-4 py-2.5 text-gray-500 hover:text-gray-700 font-medium rounded-xl hover:bg-gray-100 transition-colors sm:ml-auto"
+            >
+              <Copy size={16} />
+              复制结果
+            </button>
+          </div>
+
+          <section className="flex flex-col min-h-0">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-3">
+              <div>
+                <h3 className="text-sm font-semibold text-gray-800">{resultLabel}</h3>
+                <p className="text-xs text-gray-500 mt-1">这里展示最近一次转换后的内容</p>
+              </div>
+            </div>
+            <textarea
+              value={result}
+              readOnly
+              placeholder="转换结果将显示在这里..."
+              className="w-full min-h-[180px] p-4 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-700 focus:outline-none resize-none"
+            ></textarea>
+          </section>
         </div>
       </div>
+    </div>
+  );
+}
 
-      <textarea
-        placeholder="输入或粘贴内容..."
-        className="w-full flex-1 min-h-[200px] p-4 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 transition-all placeholder:text-gray-400 resize-none mb-6"
-      ></textarea>
+function UnixTimestampTool() {
+  const conversionButtonClass =
+    "h-11 w-full px-3 rounded-xl border border-blue-500 text-blue-600 hover:bg-blue-50 transition-colors whitespace-nowrap";
+  const timestampResultClass =
+    "h-11 w-full px-3 bg-white border border-gray-200 rounded-xl text-sm text-gray-700";
 
-      <div className="flex flex-wrap items-center gap-4">
-        <button className="flex items-center gap-2 px-6 py-2.5 bg-purple-600 text-white font-medium rounded-xl hover:bg-purple-700 transition-all shadow-sm shadow-purple-500/20 active:scale-[0.98]">
-          URL 编码
-        </button>
-        <button className="flex items-center gap-2 px-6 py-2.5 bg-white border border-gray-200 text-gray-700 font-medium rounded-xl hover:bg-gray-50 transition-all shadow-sm active:scale-[0.98]">
-          URL 解码
-        </button>
-        <div className="flex-1"></div>
-        <button className="flex items-center gap-2 px-4 py-2.5 text-gray-500 hover:text-gray-700 font-medium rounded-xl hover:bg-gray-100 transition-colors">
-          <Copy size={16} />
-          复制结果
-        </button>
+  const [currentTimestamp, setCurrentTimestamp] = useState(() => Math.floor(Date.now() / 1000).toString());
+  const [isTicking, setIsTicking] = useState(true);
+  const [timestampInput, setTimestampInput] = useState(Math.floor(Date.now() / 1000).toString());
+  const [timestampUnit, setTimestampUnit] = useState<TimestampUnit>("seconds");
+  const [timestampResult, setTimestampResult] = useState("");
+  const [dateTimeInput, setDateTimeInput] = useState("");
+  const [dateTimeUnit, setDateTimeUnit] = useState<TimestampUnit>("seconds");
+  const [dateTimeResult, setDateTimeResult] = useState("");
+  const [dateParts, setDateParts] = useState({
+    year: new Date().getFullYear().toString(),
+    month: "",
+    day: "",
+    hour: "",
+    minute: "",
+    second: "",
+  });
+  const [partsUnit, setPartsUnit] = useState<TimestampUnit>("seconds");
+  const [partsResult, setPartsResult] = useState("");
+
+  useEffect(() => {
+    if (!isTicking) return;
+
+    const intervalId = window.setInterval(() => {
+      setCurrentTimestamp(Math.floor(Date.now() / 1000).toString());
+    }, 1000);
+
+    return () => window.clearInterval(intervalId);
+  }, [isTicking]);
+
+  const refreshCurrentTimestamp = () => {
+    setCurrentTimestamp(Math.floor(Date.now() / 1000).toString());
+  };
+
+  const handleConvertTimestamp = () => {
+    const numericValue = Number(timestampInput.trim());
+    if (!Number.isFinite(numericValue)) {
+      alert("请输入有效的 Unix 时间戳。");
+      return;
+    }
+
+    const timestampMs = timestampUnit === "seconds" ? numericValue * 1000 : numericValue;
+    const parsedDate = new Date(timestampMs);
+
+    if (Number.isNaN(parsedDate.getTime())) {
+      alert("时间戳格式无效，无法转换。");
+      return;
+    }
+
+    setTimestampResult(formatDateTime(parsedDate));
+  };
+
+  const handleConvertDateTimeString = () => {
+    const parsedDate = parseDateTimeInput(dateTimeInput);
+    if (!parsedDate) {
+      alert("请输入有效时间，格式如 2026/03/10 12:30:45。");
+      return;
+    }
+
+    setDateTimeResult(convertDateToTimestamp(parsedDate, dateTimeUnit).toString());
+  };
+
+  const handleDatePartChange = (
+    field: keyof typeof dateParts,
+    nextValue: string,
+    maxLength: number
+  ) => {
+    setDateParts((prev) => ({
+      ...prev,
+      [field]: nextValue.replace(/\D/g, "").slice(0, maxLength),
+    }));
+  };
+
+  const handleConvertDateParts = () => {
+    const { year, month, day, hour, minute, second } = dateParts;
+    if (!year || !month || !day || !hour || !minute || !second) {
+      alert("请完整填写年月日时分秒。");
+      return;
+    }
+
+    const parsedDate = new Date(
+      Number(year),
+      Number(month) - 1,
+      Number(day),
+      Number(hour),
+      Number(minute),
+      Number(second)
+    );
+
+    if (
+      parsedDate.getFullYear() !== Number(year)
+      || parsedDate.getMonth() !== Number(month) - 1
+      || parsedDate.getDate() !== Number(day)
+      || parsedDate.getHours() !== Number(hour)
+      || parsedDate.getMinutes() !== Number(minute)
+      || parsedDate.getSeconds() !== Number(second)
+    ) {
+      alert("输入的日期时间无效，请检查后重试。");
+      return;
+    }
+
+    setPartsResult(convertDateToTimestamp(parsedDate, partsUnit).toString());
+  };
+
+  const renderUnitToggle = (
+    value: TimestampUnit,
+    onChange: (value: TimestampUnit) => void
+  ) => (
+    <div className="inline-flex h-11 w-full min-w-[96px] rounded-xl border border-gray-200 bg-white p-1">
+      <button
+        type="button"
+        onClick={() => onChange("seconds")}
+        className={`flex-1 rounded-lg text-sm font-medium transition-colors ${
+          value === "seconds" ? "bg-blue-50 text-blue-600" : "text-gray-500 hover:text-gray-700"
+        }`}
+      >
+        秒
+      </button>
+      <button
+        type="button"
+        onClick={() => onChange("milliseconds")}
+        className={`flex-1 rounded-lg text-sm font-medium transition-colors ${
+          value === "milliseconds" ? "bg-blue-50 text-blue-600" : "text-gray-500 hover:text-gray-700"
+        }`}
+      >
+        毫秒
+      </button>
+    </div>
+  );
+
+  return (
+    <div className="max-w-6xl">
+      <div className="bg-white rounded-2xl border border-gray-100 shadow-[0_2px_10px_-4px_rgba(0,0,0,0.05)] p-6 md:p-8 space-y-8">
+        <div className="flex flex-col gap-4 rounded-2xl bg-slate-50 border border-slate-100 p-5">
+          <div className="flex flex-col xl:flex-row xl:items-center gap-4 xl:gap-6">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center text-blue-500 shrink-0">
+                <Clock3 size={20} />
+              </div>
+              <div className="min-w-0">
+                <h2 className="text-lg font-bold text-gray-900">Unix 时间戳</h2>
+                <p className="text-sm text-gray-500 mt-0.5">当前时间戳与常用时间转换工具</p>
+              </div>
+            </div>
+              <div className="xl:ml-auto flex flex-col lg:flex-row lg:flex-wrap lg:items-center gap-3">
+                <span className="text-sm text-gray-700 whitespace-nowrap">现在的 Unix 时间戳是：</span>
+                <div className="px-4 h-11 inline-flex items-center rounded-xl border border-orange-200 bg-white text-orange-500 font-medium whitespace-nowrap">
+                  {currentTimestamp}
+                </div>
+              <div className="flex flex-wrap gap-3">
+                <button
+                  type="button"
+                  onClick={() => setIsTicking(true)}
+                  className="px-4 h-11 rounded-xl border border-blue-500 text-blue-600 hover:bg-blue-50 transition-colors"
+                >
+                  开始
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsTicking(false)}
+                  className="px-4 h-11 rounded-xl border border-blue-500 text-blue-600 hover:bg-blue-50 transition-colors"
+                >
+                  停止
+                </button>
+                <button
+                  type="button"
+                  onClick={refreshCurrentTimestamp}
+                  className="px-4 h-11 rounded-xl border border-blue-500 text-blue-600 hover:bg-blue-50 transition-colors"
+                >
+                  刷新
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-5">
+          <div className="rounded-2xl border border-gray-100 bg-gray-50/70 p-4">
+            <div className="grid grid-cols-1 xl:grid-cols-[230px_minmax(0,1fr)] gap-4 xl:gap-6 items-center">
+              <label className="text-sm text-gray-700">Unix 时间戳 (Unix timestamp)</label>
+              <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,220px)_96px_96px_minmax(220px,240px)] gap-3 items-center">
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={timestampInput}
+                  onChange={(e) => setTimestampInput(e.target.value.replace(/[^\d-]/g, ""))}
+                  className="h-11 px-4 bg-white border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                />
+                {renderUnitToggle(timestampUnit, setTimestampUnit)}
+                <button
+                  type="button"
+                  onClick={handleConvertTimestamp}
+                  className={conversionButtonClass}
+                >
+                  转换
+                </button>
+                <input
+                  type="text"
+                  readOnly
+                  value={timestampResult}
+                  placeholder="转换结果"
+                  className="h-11 px-4 bg-white border border-gray-200 rounded-xl text-sm text-gray-700"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-gray-100 bg-gray-50/70 p-4">
+            <div className="grid grid-cols-1 xl:grid-cols-[230px_minmax(0,1fr)] gap-4 xl:gap-6 items-center">
+              <label className="text-sm text-gray-700">时间（年/月/日 时:分:秒）</label>
+              <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,220px)_96px_220px_96px] gap-3 items-center">
+                <input
+                  type="text"
+                  value={dateTimeInput}
+                  onChange={(e) => setDateTimeInput(e.target.value)}
+                  placeholder="例: 2026/03/10 12:30:45"
+                  className="h-11 w-full px-4 bg-white border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                />
+                <button
+                  type="button"
+                  onClick={handleConvertDateTimeString}
+                  className={conversionButtonClass}
+                >
+                  转换
+                </button>
+                <input
+                  type="text"
+                  readOnly
+                  value={dateTimeResult}
+                  placeholder="时间戳结果"
+                  className={timestampResultClass}
+                />
+                {renderUnitToggle(dateTimeUnit, setDateTimeUnit)}
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-gray-100 bg-gray-50/70 p-4">
+            <div className="grid grid-cols-1 xl:grid-cols-[80px_minmax(0,1fr)] gap-4 xl:gap-6 items-center">
+              <label className="text-sm text-gray-700">时间</label>
+              <div className="flex flex-col gap-3">
+                <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-[94px_70px_70px_70px_70px_70px_96px_170px_96px] gap-2 items-center">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={dateParts.year}
+                      onChange={(e) => handleDatePartChange("year", e.target.value, 4)}
+                      className="h-11 w-full min-w-0 px-2.5 bg-white border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                    />
+                    <span className="text-sm text-gray-600 whitespace-nowrap">年</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={dateParts.month}
+                      onChange={(e) => handleDatePartChange("month", e.target.value, 2)}
+                      className="h-11 w-full min-w-0 px-2.5 bg-white border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                    />
+                    <span className="text-sm text-gray-600 whitespace-nowrap">月</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={dateParts.day}
+                      onChange={(e) => handleDatePartChange("day", e.target.value, 2)}
+                      className="h-11 w-full min-w-0 px-2.5 bg-white border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                    />
+                    <span className="text-sm text-gray-600 whitespace-nowrap">日</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={dateParts.hour}
+                      onChange={(e) => handleDatePartChange("hour", e.target.value, 2)}
+                      className="h-11 w-full min-w-0 px-2.5 bg-white border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                    />
+                    <span className="text-sm text-gray-600 whitespace-nowrap">时</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={dateParts.minute}
+                      onChange={(e) => handleDatePartChange("minute", e.target.value, 2)}
+                      className="h-11 w-full min-w-0 px-2.5 bg-white border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                    />
+                    <span className="text-sm text-gray-600 whitespace-nowrap">分</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={dateParts.second}
+                      onChange={(e) => handleDatePartChange("second", e.target.value, 2)}
+                      className="h-11 w-full min-w-0 px-2.5 bg-white border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                    />
+                    <span className="text-sm text-gray-600 whitespace-nowrap">秒</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleConvertDateParts}
+                    className={conversionButtonClass}
+                  >
+                    转换
+                  </button>
+                  <input
+                    type="text"
+                    readOnly
+                    value={partsResult}
+                    placeholder="时间戳结果"
+                    className={timestampResultClass}
+                  />
+                  {renderUnitToggle(partsUnit, setPartsUnit)}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -1322,6 +1790,7 @@ function App() {
                   }`}
                 >
                   {inst.toolId === "url-encode" && <UrlTool />}
+                  {inst.toolId === "unix-timestamp" && <UnixTimestampTool />}
                 </div>
               );
             })
