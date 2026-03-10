@@ -80,7 +80,7 @@ interface ConsoleLine {
   type: ConsoleLineType;
 }
 
-type AdbFlowStep = "checking" | "existing-devices" | "pair" | "connect" | "done";
+type AdbFlowStep = "idle" | "checking" | "existing-devices" | "pair" | "connect" | "done";
 
 type IpOctets = [string, string, string, string];
 
@@ -373,7 +373,8 @@ function PairingCodeInput({
 // 独立工具组件
 // =======================
 function AdbTool() {
-  const [step, setStep] = useState<AdbFlowStep>("checking");
+  // 初始状态为 idle，等待用户手动点击检查设备
+  const [step, setStep] = useState<AdbFlowStep>("idle");
   const [pairAddress, setPairAddress] = useState<SegmentedAddressValue>(() =>
     parseStoredAddress(PAIR_ADDRESS_STORAGE_KEY)
   );
@@ -393,7 +394,6 @@ function AdbTool() {
     createConsoleLine("> 等待执行指令...", "info"),
   ]);
   const consoleRef = useRef<HTMLDivElement | null>(null);
-  const hasInitializedRef = useRef(false);
 
   useEffect(() => {
     const panel = consoleRef.current;
@@ -511,11 +511,7 @@ function AdbTool() {
     }
   }, [connectAddress]);
 
-  useEffect(() => {
-    if (hasInitializedRef.current) return;
-    hasInitializedRef.current = true;
-    void checkDevices({ resetLogs: true });
-  }, []);
+  // 不再自动检查设备，改为手动触发
 
   const handleResetFlow = () => {
     setPairAddress(parseStoredAddress(PAIR_ADDRESS_STORAGE_KEY));
@@ -524,8 +520,8 @@ function AdbTool() {
     setExistingDevices([]);
     setCheckError(null);
     setLastConnectedSerial(null);
-    resetConsole("> 流程已重置，重新检查当前 ADB 设备状态...");
-    void checkDevices();
+    resetConsole("> 流程已重置，请点击'开始检查设备'继续...");
+    setStep("idle");
   };
 
   const handleBack = () => {
@@ -545,8 +541,16 @@ function AdbTool() {
       if (existingDevices.length > 0) {
         setStep("existing-devices");
       } else {
-        void checkDevices();
+        setStep("idle");
       }
+    }
+
+    if (step === "existing-devices") {
+      setStep("idle");
+    }
+
+    if (step === "checking") {
+      setStep("idle");
     }
   };
 
@@ -669,9 +673,44 @@ function AdbTool() {
     resetConsole("> 控制台已清空，等待执行指令...");
   };
 
-  const canGoBack = step === "pair" || step === "connect" || step === "done";
+  const canGoBack = step === "checking" || step === "existing-devices" || step === "pair" || step === "connect" || step === "done";
 
   const renderStepPanel = () => {
+    if (step === "idle") {
+      return (
+        <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-[0_2px_10px_-4px_rgba(0,0,0,0.05)]">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-50 to-teal-50 flex items-center justify-center text-emerald-500">
+              <Smartphone size={18} />
+            </div>
+            <div>
+              <h2 className="text-lg font-bold text-gray-900">ADB WiFi 配对</h2>
+              <p className="text-sm text-gray-500 mt-0.5">通过 WiFi 无线连接 Android 设备进行调试</p>
+            </div>
+          </div>
+          <div className="space-y-4">
+            <div className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-3 text-sm text-gray-600">
+              <p className="font-medium text-gray-700 mb-2">使用前请确保：</p>
+              <ul className="space-y-1.5 list-disc list-inside text-gray-600">
+                <li>手机已通过 USB 连接电脑</li>
+                <li>手机已开启开发者选项和 USB 调试</li>
+                <li>电脑已安装 ADB 驱动（Windows）</li>
+              </ul>
+            </div>
+            <button
+              type="button"
+              onClick={() => void checkDevices({ resetLogs: true })}
+              disabled={isCheckingDevices}
+              className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white font-medium rounded-xl transition-all"
+            >
+              <Smartphone size={16} />
+              {isCheckingDevices ? "正在检查设备..." : "开始检查设备"}
+            </button>
+          </div>
+        </div>
+      );
+    }
+
     if (step === "checking") {
       return (
         <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-[0_2px_10px_-4px_rgba(0,0,0,0.05)]">
@@ -851,6 +890,7 @@ function AdbTool() {
               <p className="text-xs font-semibold tracking-wider text-gray-400 uppercase">ADB WiFi 向导</p>
               <p className="text-sm text-gray-500 mt-1">
                 当前步骤：
+                {step === "idle" && " 准备"}
                 {step === "checking" && " 检查设备"}
                 {step === "existing-devices" && " 已连接设备确认"}
                 {step === "pair" && " 配对"}
