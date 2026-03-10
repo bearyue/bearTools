@@ -36,6 +36,14 @@
   - **无缝状态保活**：隐藏 Tab 状态不丢失。
 - [x] **工具 UI 占位**：已画好 `ADB WiFi 配对` 和 `URL 编解码` 的第一版静态 UI，包含控制台输出模拟区域。
 - [x] **Agent 启动工具**：支持目录/指令/分组管理，可一键打开终端并执行预设指令。
+- [x] **ADB WiFi 配对工具**：
+  - 支持 `adb devices` 检查、`adb pair` / `adb connect` 向导式流程。
+  - 支持分段 IP/Port 输入、6 位配对码输入、连接结果复核与控制台输出。
+- [x] **URL 编解码工具**：
+  - 支持上下结构输入/结果区、手动 Encode/Decode、复制结果、清空输入。
+- [x] **Unix 时间戳工具**：
+  - 支持当前时间戳开始/停止/刷新。
+  - 支持秒/毫秒切换、时间戳与日期时间双向转换。
 
 ---
 
@@ -43,12 +51,11 @@
 
 ### Phase 2: 工具核心功能实现
 1. **URL 编解码工具 (纯前端)**：
-   - 监听文本框输入，实现 Encode/Decode 按钮逻辑。
-   - 接入系统剪贴板实现“复制结果”。
+   - [x] 已完成 Encode/Decode、结果复制、输入清空与响应式布局优化。
 2. **ADB WiFi 配对工具 (Rust 桥接)**：
-   - 编写 Tauri Command (`src-tauri/src/lib.rs`)，封装 Rust 底层调用系统 `adb pair` 和 `adb connect` 的能力。
-   - 前端接收并流式输出命令行的 `stdout` / `stderr` 到黑色的控制台面板区。
-   - 增加设备列表状态轮询。
+   - [x] 已完成 `adb devices`、`adb pair`、`adb connect` 桥接与前端向导式交互。
+3. **Unix 时间戳工具 (纯前端)**：
+   - [x] 已完成当前时间戳展示、秒/毫秒切换与常用时间转换。
 
 ### Phase 3: 工程化与架构升级
 1. **组件拆分**：随着工具增加，目前的 `App.tsx` 体积会膨胀。需将 `AdbTool`、`UrlTool` 以及 `SortableTab` 拆分到独立的组件文件中（如 `src/tools/adb/index.tsx`）。`AgentLauncher` 已先行拆分到 `src/components/AgentLauncher.tsx`。
