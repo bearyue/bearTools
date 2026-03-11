@@ -1,6 +1,7 @@
 use serde::Serialize;
 use std::{io::ErrorKind, path::Path, process::Command};
 use tauri_plugin_autostart::MacosLauncher;
+use tauri::async_runtime::spawn_blocking;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -56,6 +57,16 @@ fn run_adb_process(args: &[&str]) -> Result<AdbCommandResult, String> {
         exit_code: output.status.code(),
         success: output.status.success(),
     })
+}
+
+async fn run_adb_blocking<T, F>(job: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    spawn_blocking(job)
+        .await
+        .map_err(|error| format!("执行 adb 任务失败: {error}"))?
 }
 
 fn contains_adb_failure_text(text: &str) -> bool {
@@ -197,27 +208,33 @@ fn open_directory(path: &str) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn adb_pair(address: &str, pairing_code: &str) -> Result<AdbCommandResult, String> {
+async fn adb_pair(address: &str, pairing_code: &str) -> Result<AdbCommandResult, String> {
     let address = require_non_empty(address, "配对地址")?;
     let pairing_code = require_non_empty(pairing_code, "配对码")?;
 
-    let mut result = run_adb_process(&["pair", &address, &pairing_code])?;
-    result.success = adb_pair_succeeded(&result);
-    Ok(result)
+    run_adb_blocking(move || {
+        let mut result = run_adb_process(&["pair", &address, &pairing_code])?;
+        result.success = adb_pair_succeeded(&result);
+        Ok(result)
+    })
+    .await
 }
 
 #[tauri::command]
-fn adb_connect(address: &str) -> Result<AdbCommandResult, String> {
+async fn adb_connect(address: &str) -> Result<AdbCommandResult, String> {
     let address = require_non_empty(address, "连接地址")?;
 
-    let mut result = run_adb_process(&["connect", &address])?;
-    result.success = adb_connect_succeeded(&result);
-    Ok(result)
+    run_adb_blocking(move || {
+        let mut result = run_adb_process(&["connect", &address])?;
+        result.success = adb_connect_succeeded(&result);
+        Ok(result)
+    })
+    .await
 }
 
 #[tauri::command]
-fn adb_list_devices() -> Result<AdbDevicesResult, String> {
-    let result = run_adb_process(&["devices"])?;
+async fn adb_list_devices() -> Result<AdbDevicesResult, String> {
+    let result = run_adb_blocking(|| run_adb_process(&["devices"])).await?;
     let devices = parse_adb_devices(&result.stdout);
     let combined = format!("{}\n{}", result.stdout, result.stderr);
 
