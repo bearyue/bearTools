@@ -391,7 +391,7 @@ function PairingCodeInput({
 // 独立工具组件
 // =======================
 function AdbTool() {
-  const [step, setStep] = useState<AdbFlowStep>("checking");
+  const [step, setStep] = useState<AdbFlowStep>("pair");
   const [pairAddress, setPairAddress] = useState<SegmentedAddressValue>(() =>
     parseStoredAddress(PAIR_ADDRESS_STORAGE_KEY)
   );
@@ -411,7 +411,6 @@ function AdbTool() {
     createConsoleLine("> 等待执行指令...", "info"),
   ]);
   const consoleRef = useRef<HTMLDivElement | null>(null);
-  const hasInitializedRef = useRef(false);
 
   useEffect(() => {
     const panel = consoleRef.current;
@@ -528,12 +527,6 @@ function AdbTool() {
       localStorage.removeItem(CONNECT_ADDRESS_STORAGE_KEY);
     }
   }, [connectAddress]);
-
-  useEffect(() => {
-    if (hasInitializedRef.current) return;
-    hasInitializedRef.current = true;
-    void checkDevices({ resetLogs: true });
-  }, []);
 
   const handleResetFlow = () => {
     setPairAddress(parseStoredAddress(PAIR_ADDRESS_STORAGE_KEY));
@@ -688,6 +681,7 @@ function AdbTool() {
   };
 
   const canGoBack = step === "pair" || step === "connect" || step === "done";
+  const showNavActions = step !== "pair";
 
   const renderStepPanel = () => {
     if (step === "checking") {
@@ -793,14 +787,25 @@ function AdbTool() {
               tone="blue"
             />
             <PairingCodeInput value={pairingCode} onChange={setPairingCode} disabled={isPairing || isConnecting} />
-            <button
-              type="submit"
-              disabled={isPairing || isConnecting}
-              className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 disabled:cursor-not-allowed text-white font-medium rounded-xl transition-all shadow-sm shadow-blue-500/20 active:scale-[0.98]"
-            >
-              <Play size={16} />
-              {isPairing ? "正在执行 adb pair..." : "执行 adb pair"}
-            </button>
+            <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
+              <button
+                type="submit"
+                disabled={isPairing || isConnecting}
+                className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 disabled:cursor-not-allowed text-white font-medium rounded-xl transition-all shadow-sm shadow-blue-500/20 active:scale-[0.98]"
+              >
+                <Play size={16} />
+                {isPairing ? "正在执行 adb pair..." : "执行 adb pair"}
+              </button>
+              <button
+                type="button"
+                onClick={() => void checkDevices({ resetLogs: true })}
+                disabled={isCheckingDevices || isPairing || isConnecting}
+                className="inline-flex items-center justify-center gap-2 px-4 py-3 bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 font-medium rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <RefreshCw size={16} className={isCheckingDevices ? "animate-spin" : ""} />
+                检查设备
+              </button>
+            </div>
           </div>
         </form>
       );
@@ -876,26 +881,28 @@ function AdbTool() {
                 {step === "done" && " 完成"}
               </p>
             </div>
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={handleBack}
-                disabled={!canGoBack || isCheckingDevices || isPairing || isConnecting}
-                className="inline-flex items-center gap-2 px-3 py-2 text-sm bg-white border border-gray-200 hover:bg-gray-50 disabled:text-gray-300 disabled:border-gray-100 disabled:cursor-not-allowed text-gray-700 rounded-xl transition-all"
-              >
-                <ArrowLeft size={14} />
-                返回上一步
-              </button>
-              <button
-                type="button"
-                onClick={handleResetFlow}
-                disabled={isCheckingDevices || isPairing || isConnecting}
-                className="inline-flex items-center gap-2 px-3 py-2 text-sm bg-white border border-gray-200 hover:bg-gray-50 disabled:text-gray-300 disabled:border-gray-100 disabled:cursor-not-allowed text-gray-700 rounded-xl transition-all"
-              >
-                <RotateCcw size={14} />
-                重置流程
-              </button>
-            </div>
+            {showNavActions && (
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={handleBack}
+                  disabled={!canGoBack || isCheckingDevices || isPairing || isConnecting}
+                  className="inline-flex items-center gap-2 px-3 py-2 text-sm bg-white border border-gray-200 hover:bg-gray-50 disabled:text-gray-300 disabled:border-gray-100 disabled:cursor-not-allowed text-gray-700 rounded-xl transition-all"
+                >
+                  <ArrowLeft size={14} />
+                  返回上一步
+                </button>
+                <button
+                  type="button"
+                  onClick={handleResetFlow}
+                  disabled={isCheckingDevices || isPairing || isConnecting}
+                  className="inline-flex items-center gap-2 px-3 py-2 text-sm bg-white border border-gray-200 hover:bg-gray-50 disabled:text-gray-300 disabled:border-gray-100 disabled:cursor-not-allowed text-gray-700 rounded-xl transition-all"
+                >
+                  <RotateCcw size={14} />
+                  重置流程
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
