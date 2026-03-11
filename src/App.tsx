@@ -13,6 +13,7 @@ import {
   ArrowLeft,
   RotateCcw,
   RefreshCw,
+  Settings,
 } from "lucide-react";
 import {
   DndContext,
@@ -33,6 +34,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { invoke } from "@tauri-apps/api/core";
+import { enable as enableAutostart, disable as disableAutostart, isEnabled as isAutostartEnabled } from "@tauri-apps/plugin-autostart";
 import AgentLauncher from "./components/AgentLauncher";
 
 // =======================
@@ -84,6 +86,8 @@ type AdbFlowStep = "checking" | "existing-devices" | "pair" | "connect" | "done"
 
 type IpOctets = [string, string, string, string];
 
+type ThemeMode = "light" | "dark" | "system";
+
 interface SegmentedAddressValue {
   octets: IpOctets;
   port: string;
@@ -92,6 +96,20 @@ interface SegmentedAddressValue {
 const MAX_PAIRING_CODE_DIGITS = 6;
 const PAIR_ADDRESS_STORAGE_KEY = "adb_last_pair_address";
 const CONNECT_ADDRESS_STORAGE_KEY = "adb_last_connect_address";
+const THEME_STORAGE_KEY = "app_theme_mode";
+const THEME_OPTIONS: Array<{ id: ThemeMode; label: string }> = [
+  { id: "light", label: "浅色" },
+  { id: "dark", label: "深色" },
+  { id: "system", label: "跟随系统" },
+];
+
+const getInitialThemeMode = (): ThemeMode => {
+  const stored = localStorage.getItem(THEME_STORAGE_KEY);
+  if (stored === "light" || stored === "dark" || stored === "system") {
+    return stored;
+  }
+  return "system";
+};
 
 const createConsoleLine = (text: string, type: ConsoleLineType): ConsoleLine => ({
   id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
@@ -909,15 +927,14 @@ function AdbTool() {
           {consoleLines.map((line) => (
             <p
               key={line.id}
-              className={`whitespace-pre-wrap break-all ${
-                line.type === "command"
+              className={`whitespace-pre-wrap break-all ${line.type === "command"
                   ? "text-blue-300"
                   : line.type === "success"
                     ? "text-emerald-300"
                     : line.type === "error"
                       ? "text-rose-300"
                       : "text-gray-500"
-              }`}
+                }`}
             >
               {line.text}
             </p>
@@ -1170,18 +1187,16 @@ function UnixTimestampTool() {
       <button
         type="button"
         onClick={() => onChange("seconds")}
-        className={`flex-1 rounded-lg text-sm font-medium transition-colors ${
-          value === "seconds" ? "bg-blue-50 text-blue-600" : "text-gray-500 hover:text-gray-700"
-        }`}
+        className={`flex-1 rounded-lg text-sm font-medium transition-colors ${value === "seconds" ? "bg-blue-50 text-blue-600" : "text-gray-500 hover:text-gray-700"
+          }`}
       >
         秒
       </button>
       <button
         type="button"
         onClick={() => onChange("milliseconds")}
-        className={`flex-1 rounded-lg text-sm font-medium transition-colors ${
-          value === "milliseconds" ? "bg-blue-50 text-blue-600" : "text-gray-500 hover:text-gray-700"
-        }`}
+        className={`flex-1 rounded-lg text-sm font-medium transition-colors ${value === "milliseconds" ? "bg-blue-50 text-blue-600" : "text-gray-500 hover:text-gray-700"
+          }`}
       >
         毫秒
       </button>
@@ -1191,7 +1206,7 @@ function UnixTimestampTool() {
   return (
     <div className="max-w-6xl">
       <div className="bg-white rounded-2xl border border-gray-100 shadow-[0_2px_10px_-4px_rgba(0,0,0,0.05)] p-6 md:p-8 space-y-8">
-        <div className="flex flex-col gap-4 rounded-2xl bg-slate-50 border border-slate-100 p-5">
+        <div className="flex flex-col gap-4 rounded-2xl bg-gray-50 border border-gray-100 p-5">
           <div className="flex flex-col xl:flex-row xl:items-center gap-4 xl:gap-6">
             <div className="flex items-center gap-3 min-w-0">
               <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center text-blue-500 shrink-0">
@@ -1202,11 +1217,11 @@ function UnixTimestampTool() {
                 <p className="text-sm text-gray-500 mt-0.5">当前时间戳与常用时间转换工具</p>
               </div>
             </div>
-              <div className="xl:ml-auto flex flex-col lg:flex-row lg:flex-wrap lg:items-center gap-3">
-                <span className="text-sm text-gray-700 whitespace-nowrap">现在的 Unix 时间戳是：</span>
-                <div className="px-4 h-11 inline-flex items-center rounded-xl border border-orange-200 bg-white text-orange-500 font-medium whitespace-nowrap">
-                  {currentTimestamp}
-                </div>
+            <div className="xl:ml-auto flex flex-col lg:flex-row lg:flex-wrap lg:items-center gap-3">
+              <span className="text-sm text-gray-700 whitespace-nowrap">现在的 Unix 时间戳是：</span>
+              <div className="px-4 h-11 inline-flex items-center rounded-xl border border-orange-200 bg-white text-orange-500 font-medium whitespace-nowrap">
+                {currentTimestamp}
+              </div>
               <div className="flex flex-wrap gap-3">
                 <button
                   type="button"
@@ -1235,7 +1250,7 @@ function UnixTimestampTool() {
         </div>
 
         <div className="space-y-5">
-          <div className="rounded-2xl border border-gray-100 bg-gray-50/70 p-4">
+          <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4">
             <div className="grid grid-cols-1 xl:grid-cols-[230px_minmax(0,1fr)] gap-4 xl:gap-6 items-center">
               <label className="text-sm text-gray-700">Unix 时间戳 (Unix timestamp)</label>
               <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,220px)_96px_96px_minmax(220px,240px)] gap-3 items-center">
@@ -1265,7 +1280,7 @@ function UnixTimestampTool() {
             </div>
           </div>
 
-          <div className="rounded-2xl border border-gray-100 bg-gray-50/70 p-4">
+          <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4">
             <div className="grid grid-cols-1 xl:grid-cols-[230px_minmax(0,1fr)] gap-4 xl:gap-6 items-center">
               <label className="text-sm text-gray-700">时间（年/月/日 时:分:秒）</label>
               <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,220px)_96px_220px_96px] gap-3 items-center">
@@ -1295,7 +1310,7 @@ function UnixTimestampTool() {
             </div>
           </div>
 
-          <div className="rounded-2xl border border-gray-100 bg-gray-50/70 p-4">
+          <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4">
             <div className="grid grid-cols-1 xl:grid-cols-[80px_minmax(0,1fr)] gap-4 xl:gap-6 items-center">
               <label className="text-sm text-gray-700">时间</label>
               <div className="flex flex-col gap-3">
@@ -1411,16 +1426,15 @@ function SortableNavItem({
   return (
     <li ref={setNodeRef} style={style} className={`relative ${isDragging ? "opacity-40" : ""}`}>
       <div
-        className={`w-full flex items-center p-1 rounded-xl transition-all duration-200 group ${
-          isActive
+        className={`w-full flex items-center p-1 rounded-xl transition-all duration-200 group ${isActive
             ? "bg-blue-50 text-blue-600 font-medium"
             : "text-gray-500 hover:bg-gray-50 hover:text-gray-900"
-        }`}
+          }`}
       >
         <div
           {...attributes}
           {...listeners}
-          className="cursor-grab active:cursor-grabbing p-1.5 mr-1 rounded-md text-gray-300 hover:text-gray-500 hover:bg-gray-200/50 transition-colors opacity-0 group-hover:opacity-100"
+          className="cursor-grab active:cursor-grabbing p-1.5 mr-1 rounded-md text-gray-300 hover:text-gray-500 hover:bg-gray-200 transition-colors opacity-0 group-hover:opacity-100"
           title="按住拖拽排序"
         >
           <GripVertical size={14} />
@@ -1471,13 +1485,11 @@ function SortableTab({
       {...listeners}
       onClick={onClick}
       onContextMenu={(e) => onContextMenu(e, inst.instanceId)}
-      className={`group relative flex items-center gap-2 px-3 h-9 min-w-[130px] max-w-[220px] rounded-t-xl cursor-pointer transition-all select-none border border-b-0 ${
-        isActive
-          ? "bg-white border-gray-300 text-blue-700 font-medium shadow-[0_2px_8px_-6px_rgba(0,0,0,0.25)]"
+      className={`group relative flex items-center gap-2 px-3 h-9 min-w-[130px] max-w-[220px] rounded-t-xl cursor-pointer transition-all select-none border ${isActive
+          ? "bg-[var(--panel-bg)] border-gray-200 border-b-[var(--panel-bg)] text-blue-700 font-medium"
           : "bg-gray-100 border-gray-200 text-gray-600 hover:bg-gray-50"
-      } ${isDragging ? "opacity-50" : "opacity-100"} ${
-        isActive ? "z-10 -mb-[1px]" : "z-0"
-      }`}
+        } ${isDragging ? "opacity-50" : "opacity-100"} ${isActive ? "z-10 -mb-[1px]" : "z-0"
+        }`}
     >
       <span className="truncate flex-1 text-xs select-none pointer-events-none">{inst.title}</span>
       <button
@@ -1486,13 +1498,12 @@ function SortableTab({
           onClose(e, inst.instanceId);
         }}
         onPointerDown={(e) => e.stopPropagation()}
-          className={`p-1 rounded-md transition-colors ${
-            isActive
-              ? "text-gray-500 hover:bg-gray-100 hover:text-gray-800"
-              : "opacity-0 group-hover:opacity-100 text-gray-400 hover:bg-gray-200 hover:text-gray-700"
+        className={`p-1 rounded-md transition-colors ${isActive
+            ? "text-gray-500 hover:bg-gray-100 hover:text-gray-800"
+            : "opacity-0 group-hover:opacity-100 text-gray-400 hover:bg-gray-200 hover:text-gray-700"
           }`}
-          title="关闭"
-        >
+        title="关闭"
+      >
         <X size={12} />
       </button>
     </div>
@@ -1511,6 +1522,11 @@ function App() {
   const [activeTabIds, setActiveTabIds] = useState<Record<string, string>>({
     "agent-launcher": "inst_init_agent",
   });
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [autoStartEnabled, setAutoStartEnabled] = useState(false);
+  const [autoStartLoading, setAutoStartLoading] = useState(false);
+  const [autoStartError, setAutoStartError] = useState<string | null>(null);
+  const [themeMode, setThemeMode] = useState<ThemeMode>(() => getInitialThemeMode());
 
   // 右键菜单状态
   const [contextMenu, setContextMenu] = useState<{
@@ -1532,6 +1548,74 @@ function App() {
     };
     window.addEventListener("click", handleClick);
     return () => window.removeEventListener("click", handleClick);
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem(THEME_STORAGE_KEY, themeMode);
+  }, [themeMode]);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+
+    const applyTheme = (isDark: boolean) => {
+      root.dataset.theme = isDark ? "dark" : "light";
+      root.style.colorScheme = isDark ? "dark" : "light";
+    };
+
+    const resolveAndApply = () => {
+      if (themeMode === "dark") {
+        applyTheme(true);
+      } else if (themeMode === "light") {
+        applyTheme(false);
+      } else {
+        applyTheme(media.matches);
+      }
+    };
+
+    resolveAndApply();
+
+    if (themeMode !== "system") return undefined;
+
+    const handleChange = (event: MediaQueryListEvent) => {
+      applyTheme(event.matches);
+    };
+
+    if (typeof media.addEventListener === "function") {
+      media.addEventListener("change", handleChange);
+      return () => media.removeEventListener("change", handleChange);
+    }
+
+    media.addListener(handleChange);
+    return () => media.removeListener(handleChange);
+  }, [themeMode]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadAutostartState = async () => {
+      setAutoStartLoading(true);
+      try {
+        const enabled = await isAutostartEnabled();
+        if (isMounted) {
+          setAutoStartEnabled(enabled);
+          setAutoStartError(null);
+        }
+      } catch (error) {
+        if (isMounted) {
+          setAutoStartError("当前环境暂不支持开机启动。");
+        }
+      } finally {
+        if (isMounted) {
+          setAutoStartLoading(false);
+        }
+      }
+    };
+
+    void loadAutostartState();
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   const sensors = useSensors(
@@ -1583,7 +1667,7 @@ function App() {
 
     const existingCount = instances.filter((i) => i.toolId === activeToolId).length;
     const title = existingCount === 0 ? (toolConfig?.name || "新标签页") : `${toolConfig?.name} ${existingCount + 1}`;
-    
+
     const newInstId = generateInstanceId();
     setInstances((prev) => [...prev, { instanceId: newInstId, toolId: activeToolId, title }]);
     setActiveTabIds((prev) => ({ ...prev, [activeToolId]: newInstId }));
@@ -1637,20 +1721,41 @@ function App() {
   const handleCloseOtherTabs = () => {
     if (!contextMenu.targetInstanceId) return;
     const targetId = contextMenu.targetInstanceId;
-    
+
     setInstances((prev) => prev.filter((i) => i.toolId !== activeToolId || i.instanceId === targetId));
     setActiveTabIds((prev) => ({ ...prev, [activeToolId]: targetId }));
     setContextMenu((prev) => ({ ...prev, show: false }));
+  };
+
+  const handleToggleAutostart = async () => {
+    if (autoStartLoading || autoStartError) return;
+    const nextValue = !autoStartEnabled;
+    setAutoStartLoading(true);
+
+    try {
+      if (nextValue) {
+        await enableAutostart();
+      } else {
+        await disableAutostart();
+      }
+      setAutoStartEnabled(nextValue);
+    } catch (error) {
+      console.error("Failed to toggle autostart:", error);
+      alert(`设置开机启动失败: ${String(error)}`);
+    } finally {
+      setAutoStartLoading(false);
+    }
   };
 
   const currentToolInstances = instances.filter((i) => i.toolId === activeToolId);
   const currentActiveTabId = activeTabIds[activeToolId];
   const activeToolConfig = tools.find((t) => t.id === activeToolId);
   const isSingleton = activeToolConfig?.singleton === true;
+  const themeIndex = Math.max(0, THEME_OPTIONS.findIndex((option) => option.id === themeMode));
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-white text-gray-800 font-sans relative">
-      
+    <div className="flex h-screen w-screen overflow-hidden bg-[var(--app-bg)] text-gray-800 font-sans relative">
+
       {/* 全局右键菜单浮层 */}
       {contextMenu.show && (
         <div
@@ -1673,11 +1778,86 @@ function App() {
         </div>
       )}
 
+      {/* 全局设置弹窗 */}
+      {settingsOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 bg-gray-50">
+              <div>
+                <h3 className="font-bold text-gray-900">设置</h3>
+                <p className="text-xs text-gray-500 mt-0.5">应用基础配置</p>
+              </div>
+              <button
+                onClick={() => setSettingsOpen(false)}
+                className="p-1.5 rounded-md text-gray-400 hover:text-gray-900 hover:bg-gray-200 transition-colors"
+                title="关闭"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="p-5 space-y-6">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <div className="text-sm font-semibold text-gray-800">开机启动</div>
+                  <div className="text-xs text-gray-500 mt-1">开启后应用将在系统启动时自动运行。</div>
+                  {autoStartError && (
+                    <div className="text-xs text-amber-600 mt-1">{autoStartError}</div>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={autoStartEnabled}
+                  disabled={autoStartLoading || !!autoStartError}
+                  onClick={handleToggleAutostart}
+                  className={`relative inline-flex h-6 w-12 items-center rounded-full transition-colors ${autoStartEnabled ? "bg-emerald-500" : "bg-gray-200"
+                    } ${autoStartLoading || autoStartError ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
+                >
+                  <span
+                    className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${autoStartEnabled ? "translate-x-6" : "translate-x-1"
+                      }`}
+                  />
+                </button>
+              </div>
+
+              <div>
+                <div className="text-sm font-semibold text-gray-800 mb-3">外观主题</div>
+                <div className="relative bg-gray-100 rounded-full p-1">
+                  <div
+                    className="absolute top-1 bottom-1 left-1 rounded-full bg-blue-600 shadow-sm transition-transform duration-200"
+                    style={{
+                      width: "calc((100% - 0.5rem) / 3)",
+                      transform: `translateX(${themeIndex * 100}%)`,
+                    }}
+                  />
+                  <div className="relative z-10 grid grid-cols-3">
+                    {THEME_OPTIONS.map((option) => (
+                      <button
+                        key={option.id}
+                        type="button"
+                        onClick={() => setThemeMode(option.id)}
+                        className={`py-2 text-xs font-medium text-center transition-colors ${option.id === themeMode ? "text-white" : "text-gray-500 hover:text-gray-700"
+                          }`}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="text-xs text-gray-400 mt-2">
+                  主题切换暂未影响界面样式，后续将接入实际主题能力。
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* =======================
           左侧边栏 (Sidebar) 
       ======================= */}
-      <aside className="w-[260px] bg-white border-r border-gray-100 flex flex-col shrink-0 z-20">
-        <div className="h-16 flex items-center px-6 border-b border-gray-50/50">
+      <aside className="w-[260px] bg-[var(--panel-bg)] border-r border-gray-100 flex flex-col shrink-0 z-20">
+        <div className="h-14 flex items-center justify-between px-6 border-b border-gray-100">
           <div className="flex items-center gap-3 cursor-pointer">
             <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white font-bold text-sm shadow-sm">
               B
@@ -1686,13 +1866,17 @@ function App() {
               bearTools
             </span>
           </div>
+          <button
+            onClick={() => setSettingsOpen(true)}
+            className="p-2 rounded-xl text-gray-400 hover:text-gray-900 hover:bg-gray-100 transition-colors"
+            title="设置"
+            aria-label="打开设置"
+          >
+            <Settings size={18} />
+          </button>
         </div>
 
         <nav className="flex-1 overflow-y-auto py-6 px-3">
-          <div className="text-[11px] font-semibold text-gray-400 mb-3 px-4 uppercase tracking-wider">
-            工具库
-          </div>
-
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleMenuDragEnd}>
             <SortableContext items={tools} strategy={verticalListSortingStrategy}>
               <ul className="space-y-1">
@@ -1713,10 +1897,10 @@ function App() {
       {/* =======================
           右侧工作区 (Workspace) 
       ======================= */}
-      <main className="flex-1 flex flex-col min-w-0 bg-[#f8f9fc]">
-        
+      <main className="flex-1 flex flex-col min-w-0 bg-[var(--app-bg)]">
+
         {/* 工具上下文头部 */}
-        <header className="h-14 flex items-center justify-between px-6 shrink-0 bg-white border-b border-gray-100">
+        <header className="h-14 flex items-center justify-between px-6 shrink-0 bg-[var(--panel-bg)] border-b border-gray-100">
           <div className="flex items-center gap-2 text-gray-800">
             {activeToolConfig && <activeToolConfig.icon size={18} className="text-gray-400" />}
             <span className="font-bold text-sm">{activeToolConfig?.name}</span>
@@ -1725,7 +1909,7 @@ function App() {
 
         {/* 专属多标签页导航栏 (单例工具如 Agent启动 隐藏此栏) */}
         {!isSingleton && (
-          <div className="bg-[#f1f3f4] flex flex-wrap items-end px-2 pt-2 border-b border-gray-200 shrink-0 gap-x-0 gap-y-0 select-none z-10 relative">
+          <div className="bg-[var(--panel-bg)] flex flex-wrap items-end px-2 pt-2 border-b border-gray-200 shrink-0 gap-x-0 gap-y-0 select-none z-10 relative">
             <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleTabDragEnd}>
               <SortableContext items={currentToolInstances.map(i => i.instanceId)} strategy={rectSortingStrategy}>
                 {currentToolInstances.map((inst) => (
@@ -1740,7 +1924,7 @@ function App() {
                 ))}
               </SortableContext>
             </DndContext>
-            
+
             <button
               onClick={handleNewTab}
               className="ml-0.5 h-8 w-8 inline-flex items-center justify-center text-gray-500 hover:bg-white hover:text-gray-900 rounded-md transition-all border border-transparent hover:border-gray-200 active:scale-95 flex-shrink-0"
@@ -1785,9 +1969,8 @@ function App() {
               return (
                 <div
                   key={inst.instanceId}
-                  className={`absolute inset-0 p-4 overflow-auto transition-opacity duration-200 ${
-                    isCurrentlyVisible ? "block opacity-100 z-10" : "hidden opacity-0 z-0"
-                  }`}
+                  className={`absolute inset-0 p-4 overflow-auto transition-opacity duration-200 ${isCurrentlyVisible ? "block opacity-100 z-10" : "hidden opacity-0 z-0"
+                    }`}
                 >
                   {inst.toolId === "url-encode" && <UrlTool />}
                   {inst.toolId === "unix-timestamp" && <UnixTimestampTool />}

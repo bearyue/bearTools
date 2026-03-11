@@ -252,7 +252,7 @@ export default function AgentLauncher() {
   const sortedDirs = getSortedDirs();
 
   return (
-    <div className="relative flex flex-col h-full bg-[#f8f9fc] w-full max-w-[1200px] mx-auto p-4 overflow-hidden">
+    <div className="relative flex flex-col h-full bg-[var(--app-bg)] w-full max-w-[1200px] mx-auto p-4 overflow-hidden">
 
       {/* 顶栏控制区 */}
       <div className="flex items-center justify-between mb-3 bg-white p-2.5 px-4 rounded-2xl shadow-sm border border-gray-100 shrink-0">
@@ -713,7 +713,7 @@ function Modal({ title, children, onClose, zIndex = "z-50" }: { title: string, c
   return (
     <div className={`absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-sm ${zIndex} p-4`}>
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 bg-gray-50/50">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 bg-gray-50">
           <h3 className="font-bold text-gray-900">{title}</h3>
           <button onClick={onClose} className="p-1 rounded-md text-gray-400 hover:text-gray-900 hover:bg-gray-200 transition-colors">
             <X size={16} />
