@@ -3,6 +3,11 @@ import {
   Smartphone,
   Link as LinkIcon,
   Clock3,
+  Braces,
+  ChevronDown,
+  ChevronRight,
+  Maximize2,
+  WrapText,
   Play,
   Copy,
   Trash2,
@@ -44,6 +49,7 @@ const INITIAL_TOOLS = [
   { id: "agent-launcher", name: "Agent 启动", icon: Bot, singleton: true },
   { id: "adb", name: "ADB WiFi 配对", icon: Smartphone, singleton: true },
   { id: "url-encode", name: "URL 编解码", icon: LinkIcon },
+  { id: "json-formatter", name: "JSON 格式化", icon: Braces },
   { id: "unix-timestamp", name: "Unix 时间戳", icon: Clock3 },
 ];
 
@@ -87,6 +93,31 @@ type AdbFlowStep = "checking" | "existing-devices" | "pair" | "connect" | "done"
 type IpOctets = [string, string, string, string];
 
 type ThemeMode = "light" | "dark" | "system";
+type JsonResultTab = "formatted" | "tree";
+type JsonValidationState = "idle" | "valid" | "invalid" | "text";
+type JsonStatusSource = "validation" | "action";
+
+type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | JsonValue[]
+  | { [key: string]: JsonValue };
+
+interface JsonValidationExcerptLine {
+  lineNumber: number;
+  text: string;
+  isTarget: boolean;
+}
+
+interface JsonValidationInfo {
+  message: string;
+  line: number | null;
+  column: number | null;
+  position: number | null;
+  excerptLines: JsonValidationExcerptLine[];
+}
 
 interface SegmentedAddressValue {
   octets: IpOctets;
@@ -225,6 +256,184 @@ const hasAnyStoredIpValue = (value: SegmentedAddressValue) =>
   value.octets.some((octet) => octet.length > 0);
 
 const padTimeValue = (value: number) => value.toString().padStart(2, "0");
+
+const isJsonContainer = (value: JsonValue): value is JsonValue[] | { [key: string]: JsonValue } =>
+  Array.isArray(value) || (typeof value === "object" && value !== null);
+
+const toJsonValue = (value: unknown): JsonValue => {
+  if (
+    value === null
+    || typeof value === "string"
+    || typeof value === "number"
+    || typeof value === "boolean"
+  ) {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => toJsonValue(item));
+  }
+
+  if (typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, nestedValue]) => [key, toJsonValue(nestedValue)])
+    );
+  }
+
+  throw new Error("仅支持标准 JSON 内容。");
+};
+
+const decodeEscapedJsonText = (input: string) => {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return trimmed;
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (typeof parsed === "string") {
+      return parsed;
+    }
+  } catch {
+    // 忽略，继续尝试常见转义文本场景
+  }
+
+  const unicodeDecoded = trimmed.replace(/\\u([0-9a-fA-F]{4})/g, (_, code: string) =>
+    String.fromCharCode(parseInt(code, 16))
+  );
+
+  const normalized = unicodeDecoded
+    .replace(/\\"/g, "\"")
+    .replace(/\\\//g, "/")
+    .replace(/\\n/g, "\n")
+    .replace(/\\r/g, "\r")
+    .replace(/\\t/g, "\t")
+    .replace(/\\\\/g, "\\");
+
+  if (
+    (normalized.startsWith("\"") && normalized.endsWith("\""))
+    || (normalized.startsWith("'") && normalized.endsWith("'"))
+  ) {
+    return normalized.slice(1, -1);
+  }
+
+  return normalized;
+};
+
+const parseJsonInput = (input: string, removeEscapes = false) => {
+  const sourceText = removeEscapes ? decodeEscapedJsonText(input) : input.trim();
+
+  if (!sourceText.trim()) {
+    throw new Error("请输入 JSON 内容后再执行。");
+  }
+
+  const parsed = toJsonValue(JSON.parse(sourceText));
+
+  return {
+    normalizedInput: sourceText,
+    parsed,
+    formatted: JSON.stringify(parsed, null, 2),
+  };
+};
+
+const collectExpandableJsonPaths = (
+  value: JsonValue,
+  segments: Array<string | number> = ["$"]
+): string[] => {
+  if (!isJsonContainer(value)) {
+    return [];
+  }
+
+  const currentPath = JSON.stringify(segments);
+  const childPaths = Array.isArray(value)
+    ? value.flatMap((item, index) => collectExpandableJsonPaths(item, [...segments, index]))
+    : Object.entries(value).flatMap(([key, nestedValue]) =>
+      collectExpandableJsonPaths(nestedValue, [...segments, key])
+    );
+
+  return [currentPath, ...childPaths];
+};
+
+const appendJsonPath = (path: string, segment: string | number) => {
+  const segments = JSON.parse(path) as Array<string | number>;
+  return JSON.stringify([...segments, segment]);
+};
+
+const getLineColumnFromPosition = (source: string, position: number) => {
+  const safePosition = Math.max(0, Math.min(position, source.length));
+  const prefix = source.slice(0, safePosition);
+  const line = prefix.split(/\r?\n/).length;
+  const lastLineBreakIndex = Math.max(prefix.lastIndexOf("\n"), prefix.lastIndexOf("\r"));
+  const column = safePosition - lastLineBreakIndex;
+
+  return { line, column };
+};
+
+const buildJsonValidationInfo = (source: string, error: unknown): JsonValidationInfo => {
+  const message = error instanceof Error ? error.message : String(error);
+  let line: number | null = null;
+  let column: number | null = null;
+  let position: number | null = null;
+
+  const lineColumnMatch = message.match(/line\s+(\d+)\s+column\s+(\d+)/i);
+  if (lineColumnMatch) {
+    line = Number(lineColumnMatch[1]);
+    column = Number(lineColumnMatch[2]);
+  }
+
+  const positionMatch = message.match(/position\s+(\d+)/i);
+  if (positionMatch) {
+    position = Number(positionMatch[1]);
+  }
+
+  if (position !== null && (line === null || column === null)) {
+    const resolved = getLineColumnFromPosition(source, position);
+    line = resolved.line;
+    column = resolved.column;
+  }
+
+  const lines = source.split(/\r?\n/);
+  const targetLine = line ?? 1;
+  const startLine = Math.max(1, targetLine - 1);
+  const endLine = Math.min(lines.length, targetLine + 1);
+
+  return {
+    message,
+    line,
+    column,
+    position,
+    excerptLines: lines.length === 0
+      ? []
+      : lines.slice(startLine - 1, endLine).map((text, index) => ({
+        lineNumber: startLine + index,
+        text,
+        isTarget: startLine + index === targetLine,
+      })),
+  };
+};
+
+const getJsonContainerSummary = (value: JsonValue[] | { [key: string]: JsonValue }) =>
+  Array.isArray(value) ? `Array(${value.length})` : `Object(${Object.keys(value).length})`;
+
+const formatJsonLeafValue = (value: Exclude<JsonValue, JsonValue[] | { [key: string]: JsonValue }>) => {
+  if (typeof value === "string") {
+    return `"${value}"`;
+  }
+
+  if (value === null) {
+    return "null";
+  }
+
+  return String(value);
+};
+
+const escapeJsonText = (input: string) => {
+  if (!input.trim()) {
+    throw new Error("请输入内容后再增加转义。");
+  }
+
+  return JSON.stringify(input).slice(1, -1);
+};
 
 const formatDateTime = (date: Date) =>
   `${date.getFullYear()}-${padTimeValue(date.getMonth() + 1)}-${padTimeValue(date.getDate())} ${padTimeValue(date.getHours())}:${padTimeValue(date.getMinutes())}:${padTimeValue(date.getSeconds())}`;
@@ -1478,6 +1687,593 @@ function UnixTimestampTool() {
   );
 }
 
+function JsonTreeNode({
+  label,
+  value,
+  depth,
+  path,
+  expandedPaths,
+  onToggle,
+  wrapText = false,
+}: {
+  label: string | null;
+  value: JsonValue;
+  depth: number;
+  path: string;
+  expandedPaths: Set<string>;
+  onToggle: (path: string) => void;
+  wrapText?: boolean;
+}) {
+  const paddingLeft = depth * 16;
+
+  if (!isJsonContainer(value)) {
+    const leafClassName = value === null
+      ? "text-gray-500"
+      : typeof value === "string"
+        ? "text-emerald-600"
+        : typeof value === "number"
+          ? "text-blue-600"
+          : "text-amber-600";
+
+    return (
+      <div
+        className={`py-0.5 text-sm leading-5 ${wrapText ? "break-all" : ""}`}
+        style={{ paddingLeft }}
+      >
+        {label && (
+          <>
+            <span className={`font-medium text-sky-700 ${wrapText ? "break-all" : ""}`}>{label}</span>
+            <span className="text-gray-300 mx-2">:</span>
+          </>
+        )}
+        <span className={`${leafClassName} ${wrapText ? "break-all" : ""}`}>{formatJsonLeafValue(value)}</span>
+      </div>
+    );
+  }
+
+  const isExpanded = expandedPaths.has(path);
+  const entries = Array.isArray(value)
+    ? value.map((item, index) => ({
+      label: `[${index}]`,
+      value: item,
+      path: appendJsonPath(path, index),
+    }))
+    : Object.entries(value).map(([key, nestedValue]) => ({
+      label: key,
+      value: nestedValue,
+      path: appendJsonPath(path, key),
+    }));
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => onToggle(path)}
+        className={`flex w-full gap-2 rounded-lg py-1 pr-2 text-left text-sm leading-5 text-gray-700 hover:bg-gray-50 transition-colors ${wrapText ? "items-start" : "items-center"}`}
+        style={{ paddingLeft }}
+      >
+        {isExpanded ? <ChevronDown size={15} className="text-gray-400" /> : <ChevronRight size={15} className="text-gray-400" />}
+        <span className={`font-medium text-sky-700 ${wrapText ? "break-all" : ""}`}>{label ?? "根节点"}</span>
+        <span className="text-gray-400">{getJsonContainerSummary(value)}</span>
+      </button>
+      {isExpanded && (
+        <div>
+          {entries.length > 0 ? (
+            entries.map((entry) => (
+              <JsonTreeNode
+                key={entry.path}
+                label={entry.label}
+                value={entry.value}
+                depth={depth + 1}
+                path={entry.path}
+                expandedPaths={expandedPaths}
+                onToggle={onToggle}
+                wrapText={wrapText}
+              />
+            ))
+          ) : (
+            <div
+              className={`py-0.5 text-sm leading-5 text-gray-400 italic ${wrapText ? "break-all" : ""}`}
+              style={{ paddingLeft: paddingLeft + 32 }}
+            >
+              空节点
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function JsonFormattedNode({
+  value,
+  depth,
+  propertyKey,
+  withComma,
+  wrapText = false,
+}: {
+  value: JsonValue;
+  depth: number;
+  propertyKey?: string;
+  withComma?: boolean;
+  wrapText?: boolean;
+}) {
+  const paddingLeft = depth * 18;
+
+  const renderPropertyKey = () => (
+    propertyKey ? (
+      <>
+        <span className={`text-sky-700 ${wrapText ? "break-all" : ""}`}>"{propertyKey}"</span>
+        <span className="text-gray-400">: </span>
+      </>
+    ) : null
+  );
+
+  if (!isJsonContainer(value)) {
+    const leafClassName = value === null
+      ? "text-gray-500"
+      : typeof value === "string"
+        ? "text-emerald-600"
+        : typeof value === "number"
+          ? "text-indigo-600"
+          : "text-amber-600";
+
+    return (
+      <div className={`py-0 font-mono text-sm leading-5 ${wrapText ? "whitespace-pre-wrap break-all" : "whitespace-pre"}`} style={{ paddingLeft }}>
+        {renderPropertyKey()}
+        <span className={`${leafClassName} ${wrapText ? "break-all" : ""}`}>{formatJsonLeafValue(value)}</span>
+        {withComma && <span className="text-gray-400">,</span>}
+      </div>
+    );
+  }
+
+  const entries = Array.isArray(value)
+    ? value.map((item, index) => ({ key: index.toString(), value: item }))
+    : Object.entries(value).map(([key, nestedValue]) => ({ key, value: nestedValue }));
+
+  const openBracket = Array.isArray(value) ? "[" : "{";
+  const closeBracket = Array.isArray(value) ? "]" : "}";
+
+  if (entries.length === 0) {
+    return (
+      <div className={`py-0 font-mono text-sm leading-5 ${wrapText ? "whitespace-pre-wrap break-all" : "whitespace-pre"}`} style={{ paddingLeft }}>
+        {renderPropertyKey()}
+        <span className="text-gray-700">{openBracket}{closeBracket}</span>
+        {withComma && <span className="text-gray-400">,</span>}
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div className={`py-0 font-mono text-sm leading-5 text-gray-700 ${wrapText ? "whitespace-pre-wrap break-all" : "whitespace-pre"}`} style={{ paddingLeft }}>
+        {renderPropertyKey()}
+        {openBracket}
+      </div>
+      {entries.map((entry, index) => (
+        <JsonFormattedNode
+          key={`${depth}_${entry.key}_${index}`}
+          value={entry.value}
+          depth={depth + 1}
+          propertyKey={Array.isArray(value) ? undefined : entry.key}
+          withComma={index < entries.length - 1}
+          wrapText={wrapText}
+        />
+      ))}
+      <div className={`py-0 font-mono text-sm leading-5 text-gray-700 ${wrapText ? "whitespace-pre-wrap break-all" : "whitespace-pre"}`} style={{ paddingLeft }}>
+        {closeBracket}
+        {withComma && <span className="text-gray-400">,</span>}
+      </div>
+    </div>
+  );
+}
+
+function JsonFormatterTool() {
+  const [input, setInput] = useState("");
+  const [formattedResult, setFormattedResult] = useState("");
+  const [parsedResult, setParsedResult] = useState<JsonValue | undefined>(undefined);
+  const [resultTab, setResultTab] = useState<JsonResultTab>("formatted");
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [statusTone, setStatusTone] = useState<"success" | "error" | "info">("info");
+  const [statusSource, setStatusSource] = useState<JsonStatusSource>("action");
+  const [expandedPaths, setExpandedPaths] = useState<string[]>([]);
+  const [validationState, setValidationState] = useState<JsonValidationState>("idle");
+  const [validationInfo, setValidationInfo] = useState<JsonValidationInfo | null>(null);
+  const [isResultPreviewOpen, setIsResultPreviewOpen] = useState(false);
+  const [wrapResultText, setWrapResultText] = useState(true);
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const expandedPathSet = new Set(expandedPaths);
+  const allExpandablePaths = parsedResult !== undefined ? collectExpandableJsonPaths(parsedResult) : [];
+  const hasTreeView = parsedResult !== undefined && isJsonContainer(parsedResult);
+  const shouldShowStatusBanner = statusMessage && statusSource === "action";
+
+  const resetPreview = () => {
+    setFormattedResult("");
+    setParsedResult(undefined);
+    setExpandedPaths([]);
+    setValidationState("idle");
+    setValidationInfo(null);
+  };
+
+  const updatePreview = ({
+    sourceText,
+    mode,
+    keepActionStatus = false,
+  }: {
+    sourceText: string;
+    mode: "json" | "text";
+    keepActionStatus?: boolean;
+  }) => {
+    if (!keepActionStatus || statusSource === "validation") {
+      setStatusMessage(null);
+    }
+
+    if (!sourceText.trim()) {
+      resetPreview();
+      return;
+    }
+
+    if (mode === "text") {
+      setFormattedResult(sourceText);
+      setParsedResult(undefined);
+      setExpandedPaths([]);
+      setValidationState("text");
+      setValidationInfo(null);
+      return;
+    }
+
+    try {
+      const { parsed, formatted } = parseJsonInput(sourceText, false);
+      setFormattedResult(formatted);
+      setParsedResult(parsed);
+      setExpandedPaths(collectExpandableJsonPaths(parsed));
+      setValidationState("valid");
+      setValidationInfo(null);
+    } catch (error) {
+      setFormattedResult("");
+      setParsedResult(undefined);
+      setExpandedPaths([]);
+      setValidationState("invalid");
+      setValidationInfo(buildJsonValidationInfo(sourceText, error));
+    }
+  };
+
+  const handleInputChange = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const nextValue = event.target.value;
+    setInput(nextValue);
+    updatePreview({ sourceText: nextValue, mode: "json", keepActionStatus: false });
+  };
+
+  const handleFormatInput = () => {
+    if (!input.trim()) {
+      handleClearAll();
+      return;
+    }
+
+    try {
+      const { formatted } = parseJsonInput(input, false);
+      setInput(formatted);
+      updatePreview({ sourceText: formatted, mode: "json", keepActionStatus: false });
+    } catch (error) {
+      setValidationState("invalid");
+      setValidationInfo(buildJsonValidationInfo(input, error));
+      setParsedResult(undefined);
+      setFormattedResult("");
+      setExpandedPaths([]);
+    }
+  };
+
+  const handleRemoveEscapes = () => {
+    const decodedText = decodeEscapedJsonText(input);
+    setInput(decodedText);
+    updatePreview({ sourceText: decodedText, mode: "json", keepActionStatus: false });
+  };
+
+  const handleAddEscapes = () => {
+    try {
+      const escapedText = escapeJsonText(input);
+      setInput(escapedText);
+      updatePreview({ sourceText: escapedText, mode: "text", keepActionStatus: true });
+      setStatusMessage("已增加转义，可直接复制结果。");
+      setStatusTone("success");
+      setStatusSource("action");
+      setResultTab("formatted");
+    } catch (error) {
+      setStatusMessage(`增加转义失败：${String(error)}`);
+      setStatusTone("error");
+      setStatusSource("validation");
+      setValidationState("invalid");
+      setValidationInfo(buildJsonValidationInfo(input, error));
+      setParsedResult(undefined);
+      setFormattedResult("");
+      setExpandedPaths([]);
+    }
+  };
+
+  const handleCopyResult = async () => {
+    if (!formattedResult) {
+      alert("当前没有可复制的格式化结果。");
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(formattedResult);
+      setStatusMessage("格式化结果已复制。");
+      setStatusTone("success");
+      setStatusSource("action");
+    } catch (error) {
+      alert(`复制失败：${String(error)}`);
+    }
+  };
+
+  const handleClearAll = () => {
+    setInput("");
+    resetPreview();
+    setStatusMessage("内容已清空。");
+    setStatusTone("info");
+    setStatusSource("action");
+  };
+
+  const handleToggleNode = (path: string) => {
+    setExpandedPaths((prev) => (
+      prev.includes(path) ? prev.filter((item) => item !== path) : [...prev, path]
+    ));
+  };
+
+  const focusInputByLine = (lineNumber: number, columnNumber?: number | null) => {
+    const textarea = inputRef.current;
+    if (!textarea) return;
+
+    const lines = input.split(/\r?\n/);
+    const safeLineNumber = Math.max(1, Math.min(lineNumber, Math.max(1, lines.length)));
+    const lineStartIndex = lines
+      .slice(0, safeLineNumber - 1)
+      .reduce((total, line) => total + line.length + 1, 0);
+    const nextPosition = lineStartIndex + Math.max(0, (columnNumber ?? 1) - 1);
+
+    textarea.focus();
+    textarea.setSelectionRange(nextPosition, nextPosition);
+  };
+
+  const renderValidationPanel = () => {
+    if (validationState !== "invalid" || !validationInfo) {
+      return null;
+    }
+
+    return (
+      <div className="mb-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h4 className="text-sm font-semibold text-gray-800">校验结果</h4>
+          <div className="mt-1 text-sm text-amber-700">
+            {validationInfo.message}
+            {(validationInfo.line !== null || validationInfo.column !== null) && (
+              <span className="ml-2 text-xs font-medium">
+                第 {validationInfo.line ?? "?"} 行，第 {validationInfo.column ?? "?"} 列
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {validationInfo.excerptLines.length > 0 && (
+        <div className="mt-3 overflow-auto rounded-xl border border-amber-100 bg-white p-3">
+          <div className="space-y-0.5 font-mono text-xs leading-4 text-gray-700">
+            {validationInfo.excerptLines.map((line) => (
+              <button
+                key={`json_error_line_${line.lineNumber}`}
+                type="button"
+                onClick={() => focusInputByLine(line.lineNumber, line.isTarget ? validationInfo.column : 1)}
+                className={`block w-full rounded-lg px-2 py-1 text-left transition-colors ${line.isTarget ? "bg-amber-50 hover:bg-amber-100" : "hover:bg-gray-50"}`}
+                title="点击定位到左侧输入框"
+              >
+                <div className={`flex gap-3 ${line.isTarget ? "text-amber-800" : "text-gray-600"}`}>
+                  <span className="w-8 shrink-0 text-right text-gray-400">{line.lineNumber}</span>
+                  <span className="flex-1 whitespace-pre-wrap break-all">{line.text || " "}</span>
+                </div>
+                {line.isTarget && validationInfo.column !== null && (
+                  <div className="flex gap-3 text-amber-600">
+                    <span className="w-8 shrink-0" />
+                    <span className="flex-1 whitespace-pre">
+                      {" ".repeat(Math.max(0, validationInfo.column - 1))}
+                      ^
+                    </span>
+                  </div>
+                )}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      </div>
+    );
+  };
+
+  const renderResultContent = (minHeightClass = "min-h-[360px]") => (
+    resultTab === "formatted" ? (
+      <div className={`flex-1 ${minHeightClass} rounded-xl border border-gray-200 bg-white p-4 ${wrapResultText ? "overflow-y-auto overflow-x-hidden" : "overflow-auto"}`}>
+        {parsedResult !== undefined ? (
+          <JsonFormattedNode value={parsedResult} depth={0} wrapText={wrapResultText} />
+        ) : (
+          <pre className={`font-mono text-sm leading-5 text-gray-700 ${wrapResultText ? "whitespace-pre-wrap break-all" : "whitespace-pre"}`}>
+            {formattedResult || "格式化结果将显示在这里..."}
+          </pre>
+        )}
+      </div>
+    ) : (
+      <div className={`flex-1 ${minHeightClass} rounded-xl border border-gray-200 bg-white p-4 ${wrapResultText ? "overflow-y-auto overflow-x-hidden" : "overflow-auto"}`}>
+        {parsedResult !== undefined ? (
+          <JsonTreeNode
+            label={null}
+            value={parsedResult}
+            depth={0}
+            path={JSON.stringify(["$"])}
+            expandedPaths={expandedPathSet}
+            onToggle={handleToggleNode}
+            wrapText={wrapResultText}
+          />
+        ) : (
+          <div className="h-full flex items-center justify-center text-sm text-gray-400">
+            暂无可展示的 JSON 树，请先完成格式化。
+          </div>
+        )}
+      </div>
+    )
+  );
+
+  return (
+    <div className="h-full">
+      {isResultPreviewOpen && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/45 backdrop-blur-sm p-4">
+          <div className="w-full max-w-6xl h-[calc(100vh-3rem)] rounded-2xl bg-white shadow-2xl border border-gray-100 flex flex-col overflow-hidden">
+            <div className="flex items-center justify-between gap-4 px-5 py-4 border-b border-gray-100 bg-gray-50">
+              <div>
+                <h3 className="text-base font-bold text-gray-900">JSON 结果放大查看</h3>
+                <p className="text-xs text-gray-500 mt-1">当前视图：{resultTab === "formatted" ? "文本" : "树结构"}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsResultPreviewOpen(false)}
+                className="p-2 rounded-xl text-gray-400 hover:text-gray-900 hover:bg-gray-200 transition-colors"
+                title="关闭放大窗口"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="flex-1 overflow-auto p-5 bg-gray-50">
+              {renderValidationPanel()}
+              {renderResultContent("min-h-0")}
+            </div>
+          </div>
+        </div>
+      )}
+      <div className="h-full overflow-auto">
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 min-h-full">
+          <section className="flex min-h-[420px] flex-col rounded-2xl border border-gray-100 bg-gray-50 p-4">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <h3 className="text-sm font-semibold text-gray-800">原始 JSON</h3>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleFormatInput}
+                  className="inline-flex min-w-[88px] items-center justify-center px-3 py-2 text-sm bg-cyan-600 text-white font-medium rounded-xl hover:bg-cyan-700 transition-all shadow-sm shadow-cyan-500/20 active:scale-[0.98]"
+                >
+                  格式化
+                </button>
+                <button
+                  type="button"
+                  onClick={handleRemoveEscapes}
+                  className="inline-flex min-w-[88px] items-center justify-center px-3 py-2 text-sm bg-white border border-gray-200 text-gray-700 font-medium rounded-xl hover:bg-gray-50 transition-all shadow-sm active:scale-[0.98]"
+                >
+                  去除转义
+                </button>
+                <button
+                  type="button"
+                  onClick={handleAddEscapes}
+                  className="inline-flex min-w-[88px] items-center justify-center px-3 py-2 text-sm bg-white border border-gray-200 text-gray-700 font-medium rounded-xl hover:bg-gray-50 transition-all shadow-sm active:scale-[0.98]"
+                >
+                  增加转义
+                </button>
+                <button
+                  type="button"
+                  onClick={handleClearAll}
+                  className="inline-flex h-9 w-9 items-center justify-center text-gray-500 hover:text-gray-700 font-medium rounded-xl hover:bg-gray-100 transition-colors"
+                  title="一键清空"
+                >
+                  <Trash2 size={16} />
+                </button>
+              </div>
+            </div>
+            <textarea
+              ref={inputRef}
+              value={input}
+              onChange={handleInputChange}
+              placeholder={"例如：{\"name\":\"bear\",\"tools\":[\"json\",\"url\"]}\n或：\"{\\\"name\\\":\\\"bear\\\"}\""}
+              className="flex-1 w-full min-h-[360px] rounded-xl border border-gray-200 bg-white p-4 font-mono text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-500 transition-all resize-none"
+            />
+          </section>
+
+          <section className="flex min-h-[420px] flex-col rounded-2xl border border-gray-100 bg-gray-50 p-4">
+            <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <h3 className="text-sm font-semibold text-gray-800">结果区域</h3>
+              <div className="flex flex-wrap gap-2">
+                <div className="inline-flex rounded-xl border border-gray-200 bg-white p-1">
+                  <button
+                    type="button"
+                    onClick={() => setResultTab("formatted")}
+                    className={`min-w-[72px] px-3 py-1.5 text-sm font-medium rounded-lg transition-colors ${resultTab === "formatted" ? "bg-cyan-50 text-cyan-700" : "text-gray-500 hover:text-gray-700"}`}
+                  >
+                    文本
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setResultTab("tree")}
+                    className={`min-w-[72px] px-3 py-1.5 text-sm font-medium rounded-lg transition-colors ${resultTab === "tree" ? "bg-cyan-50 text-cyan-700" : "text-gray-500 hover:text-gray-700"}`}
+                  >
+                    树结构
+                  </button>
+                </div>
+                {resultTab === "tree" && hasTreeView && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setExpandedPaths(allExpandablePaths)}
+                      className="px-3 py-1.5 text-sm font-medium rounded-xl border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 transition-colors"
+                    >
+                      全展开
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setExpandedPaths([JSON.stringify(["$"])])}
+                      className="px-3 py-1.5 text-sm font-medium rounded-xl border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 transition-colors"
+                    >
+                      全折叠
+                    </button>
+                  </>
+                )}
+                <button
+                  type="button"
+                  onClick={handleCopyResult}
+                  className="inline-flex h-[42px] w-[42px] items-center justify-center text-gray-500 hover:text-gray-700 font-medium rounded-xl hover:bg-gray-100 transition-colors"
+                  title="复制结果"
+                >
+                  <Copy size={16} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setWrapResultText((prev) => !prev)}
+                  className={`inline-flex h-[42px] w-[42px] items-center justify-center rounded-xl transition-colors ${wrapResultText ? "bg-cyan-50 text-cyan-700 hover:bg-cyan-100" : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"}`}
+                  title={wrapResultText ? "关闭自动换行" : "开启自动换行"}
+                >
+                  <WrapText size={16} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsResultPreviewOpen(true)}
+                  className="inline-flex h-[42px] w-[42px] items-center justify-center text-gray-500 hover:text-gray-700 font-medium rounded-xl hover:bg-gray-100 transition-colors"
+                  title="放大"
+                >
+                  <Maximize2 size={16} />
+                </button>
+              </div>
+            </div>
+
+            {shouldShowStatusBanner && (
+              <div className={`mb-3 rounded-xl px-3 py-2 text-sm ${statusTone === "success" ? "bg-emerald-50 text-emerald-700" : statusTone === "error" ? "bg-amber-50 text-amber-700" : "bg-gray-100 text-gray-600"}`}>
+                {statusMessage}
+              </div>
+            )}
+
+            {renderValidationPanel()}
+            {renderResultContent()}
+          </section>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // =======================
 // 可拖拽菜单项组件 (左侧)
 // =======================
@@ -2103,18 +2899,18 @@ function App() {
           右侧工作区 (Workspace) 
       ======================= */}
       <main className="flex-1 flex flex-col min-w-0 bg-[var(--app-bg)]">
-
-        {/* 工具上下文头部 */}
-        <header className="h-14 flex items-center justify-between px-6 shrink-0 bg-[var(--panel-bg)] border-b border-gray-100">
-          <div className="flex items-center gap-2 text-gray-800">
-            {activeToolConfig && <activeToolConfig.icon size={18} className="text-gray-400" />}
-            <span className="font-bold text-sm">{activeToolConfig?.name}</span>
-          </div>
-        </header>
+        {isSingleton && (
+          <header className="h-14 flex items-center justify-between px-6 shrink-0 bg-[var(--panel-bg)] border-b border-gray-100">
+            <div className="flex items-center gap-2 text-gray-800">
+              {activeToolConfig && <activeToolConfig.icon size={18} className="text-gray-400" />}
+              <span className="font-bold text-sm">{activeToolConfig?.name}</span>
+            </div>
+          </header>
+        )}
 
         {/* 专属多标签页导航栏 (单例工具如 Agent启动 隐藏此栏) */}
         {!isSingleton && (
-          <div className="bg-[var(--panel-bg)] flex flex-wrap items-end px-2 pt-2 border-b border-gray-200 shrink-0 gap-x-0 gap-y-0 select-none z-10 relative">
+          <div className="h-14 bg-[var(--panel-bg)] flex flex-wrap items-end px-2 pt-2 border-b border-gray-200 shrink-0 gap-x-0 gap-y-0 select-none z-10 relative">
             <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleTabDragEnd}>
               <SortableContext items={currentToolInstances.map(i => i.instanceId)} strategy={rectSortingStrategy}>
                 {currentToolInstances.map((inst) => (
@@ -2178,6 +2974,7 @@ function App() {
                     }`}
                 >
                   {inst.toolId === "url-encode" && <UrlTool />}
+                  {inst.toolId === "json-formatter" && <JsonFormatterTool />}
                   {inst.toolId === "unix-timestamp" && <UnixTimestampTool />}
                 </div>
               );
