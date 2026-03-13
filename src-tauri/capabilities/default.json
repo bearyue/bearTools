@@ -9,6 +9,9 @@
     "opener:allow-open-path",
     "dialog:default",
     "dialog:allow-open",
-    "autostart:default"
+    "autostart:default",
+    "global-shortcut:default",
+    "global-shortcut:allow-register",
+    "global-shortcut:allow-unregister"
   ]
 }
