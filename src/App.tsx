@@ -97,11 +97,80 @@ const MAX_PAIRING_CODE_DIGITS = 6;
 const PAIR_ADDRESS_STORAGE_KEY = "adb_last_pair_address";
 const CONNECT_ADDRESS_STORAGE_KEY = "adb_last_connect_address";
 const THEME_STORAGE_KEY = "app_theme_mode";
+const GLOBAL_SHORTCUT_STORAGE_KEY = "app_global_shortcut";
 const THEME_OPTIONS: Array<{ id: ThemeMode; label: string }> = [
   { id: "light", label: "浅色" },
   { id: "dark", label: "深色" },
   { id: "system", label: "跟随系统" },
 ];
+
+const GLOBAL_SHORTCUT_MODIFIER_KEYS = new Set(["Control", "Shift", "Alt", "Meta"]);
+
+const mapGlobalShortcutKey = (key: string) => {
+  if (GLOBAL_SHORTCUT_MODIFIER_KEYS.has(key)) {
+    return null;
+  }
+
+  if (key === " ") {
+    return "Space";
+  }
+
+  if (key.length === 1) {
+    const upperKey = key.toUpperCase();
+    if (/^[A-Z0-9]$/.test(upperKey)) {
+      return upperKey;
+    }
+
+    if (key === ",") return "Comma";
+    if (key === ".") return "Period";
+    if (key === "+") return "Plus";
+    if (key === "-") return "Minus";
+  }
+
+  const aliasMap: Record<string, string> = {
+    ArrowUp: "Up",
+    ArrowDown: "Down",
+    ArrowLeft: "Left",
+    ArrowRight: "Right",
+    Escape: "Esc",
+    Enter: "Enter",
+    Tab: "Tab",
+    Backspace: "Backspace",
+    Delete: "Delete",
+    Insert: "Insert",
+    Home: "Home",
+    End: "End",
+    PageUp: "PageUp",
+    PageDown: "PageDown",
+  };
+
+  if (aliasMap[key]) {
+    return aliasMap[key];
+  }
+
+  if (/^F\d{1,2}$/i.test(key)) {
+    return key.toUpperCase();
+  }
+
+  return null;
+};
+
+const formatGlobalShortcut = (event: React.KeyboardEvent<HTMLInputElement>) => {
+  const parts: string[] = [];
+
+  if (event.ctrlKey) parts.push("Ctrl");
+  if (event.altKey) parts.push("Alt");
+  if (event.shiftKey) parts.push("Shift");
+  if (event.metaKey) parts.push(navigator.userAgent.includes("Mac") ? "Command" : "Meta");
+
+  const mainKey = mapGlobalShortcutKey(event.key);
+  if (!mainKey) {
+    return null;
+  }
+
+  parts.push(mainKey);
+  return parts.join("+");
+};
 
 const getInitialThemeMode = (): ThemeMode => {
   const stored = localStorage.getItem(THEME_STORAGE_KEY);
@@ -110,6 +179,8 @@ const getInitialThemeMode = (): ThemeMode => {
   }
   return "system";
 };
+
+const getInitialGlobalShortcut = () => localStorage.getItem(GLOBAL_SHORTCUT_STORAGE_KEY) ?? "";
 
 const createConsoleLine = (text: string, type: ConsoleLineType): ConsoleLine => ({
   id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
@@ -1534,6 +1605,9 @@ function App() {
   const [autoStartLoading, setAutoStartLoading] = useState(false);
   const [autoStartError, setAutoStartError] = useState<string | null>(null);
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => getInitialThemeMode());
+  const [globalShortcutInput, setGlobalShortcutInput] = useState(() => getInitialGlobalShortcut());
+  const [globalShortcutMessage, setGlobalShortcutMessage] = useState<string | null>(null);
+  const registeredShortcutRef = useRef<string | null>(null);
 
   // 右键菜单状态
   const [contextMenu, setContextMenu] = useState<{
@@ -1560,6 +1634,34 @@ function App() {
   useEffect(() => {
     localStorage.setItem(THEME_STORAGE_KEY, themeMode);
   }, [themeMode]);
+
+  useEffect(() => {
+    let isMounted = true;
+    const stored = getInitialGlobalShortcut();
+    if (!stored) return () => {
+      isMounted = false;
+    };
+
+    const registerStoredShortcut = async () => {
+      try {
+        await invoke("set_global_shortcut", { shortcut: stored });
+        if (isMounted) {
+          registeredShortcutRef.current = stored;
+          setGlobalShortcutMessage(null);
+        }
+      } catch (error) {
+        if (isMounted) {
+          setGlobalShortcutMessage(`快捷键注册失败: ${String(error)}`);
+        }
+      }
+    };
+
+    void registerStoredShortcut();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -1754,6 +1856,67 @@ function App() {
     }
   };
 
+  const handleApplyGlobalShortcut = async (overrideValue?: string) => {
+    const nextShortcut = (overrideValue ?? globalShortcutInput).trim();
+    const previousShortcut = registeredShortcutRef.current;
+
+    if (nextShortcut === previousShortcut) {
+      setGlobalShortcutMessage("快捷键未变化。");
+      return;
+    }
+
+    setGlobalShortcutMessage(null);
+
+    if (!nextShortcut) {
+      await invoke("clear_global_shortcut");
+      localStorage.removeItem(GLOBAL_SHORTCUT_STORAGE_KEY);
+      registeredShortcutRef.current = null;
+      setGlobalShortcutMessage("已清除快捷键。");
+      return;
+    }
+
+    try {
+      await invoke("set_global_shortcut", { shortcut: nextShortcut });
+      registeredShortcutRef.current = nextShortcut;
+      localStorage.setItem(GLOBAL_SHORTCUT_STORAGE_KEY, nextShortcut);
+      setGlobalShortcutMessage("快捷键已更新。");
+    } catch (error) {
+      registeredShortcutRef.current = previousShortcut;
+      setGlobalShortcutMessage(`快捷键注册失败: ${String(error)}`);
+    }
+  };
+
+  const handleClearGlobalShortcut = () => {
+    setGlobalShortcutInput("");
+    void handleApplyGlobalShortcut("");
+  };
+
+  const handleGlobalShortcutKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Tab") return;
+
+    event.preventDefault();
+
+    if (event.key === "Backspace" || event.key === "Delete") {
+      setGlobalShortcutInput("");
+      setGlobalShortcutMessage("已清空输入，点击保存后生效。");
+      return;
+    }
+
+    if (event.key === "Escape") {
+      event.currentTarget.blur();
+      return;
+    }
+
+    const nextShortcut = formatGlobalShortcut(event);
+    if (!nextShortcut) {
+      setGlobalShortcutMessage("请继续按下主键，例如字母、数字、方向键或 F1-F12。");
+      return;
+    }
+
+    setGlobalShortcutInput(nextShortcut);
+    setGlobalShortcutMessage(`已录入 ${nextShortcut}，点击保存后生效。`);
+  };
+
   const currentToolInstances = instances.filter((i) => i.toolId === activeToolId);
   const currentActiveTabId = activeTabIds[activeToolId];
   const activeToolConfig = tools.find((t) => t.id === activeToolId);
@@ -1851,8 +2014,43 @@ function App() {
                     ))}
                   </div>
                 </div>
-                <div className="text-xs text-gray-400 mt-2">
-                  主题切换暂未影响界面样式，后续将接入实际主题能力。
+              </div>
+
+              <div>
+                <div className="text-sm font-semibold text-gray-800 mb-2">快捷键呼出主界面</div>
+                <div className="text-xs text-gray-500 mb-3">
+                  示例：Windows 使用 Ctrl+Shift+Space，macOS 使用 Command+Shift+Space。
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={globalShortcutInput}
+                    readOnly
+                    onKeyDown={handleGlobalShortcutKeyDown}
+                    onFocus={() => setGlobalShortcutMessage("请直接按下快捷键组合，按 Backspace 可清空输入。")}
+                    placeholder="点击这里后按下快捷键"
+                    className="flex-1 px-3 py-2.5 text-sm bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void handleApplyGlobalShortcut()}
+                    className="px-3 py-2.5 text-sm font-medium bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors"
+                  >
+                    保存
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleClearGlobalShortcut}
+                    className="px-3 py-2.5 text-sm font-medium bg-white border border-gray-200 text-gray-700 rounded-xl hover:bg-gray-50 transition-colors"
+                  >
+                    清除
+                  </button>
+                </div>
+                {globalShortcutMessage && (
+                  <div className="text-xs text-gray-500 mt-2">{globalShortcutMessage}</div>
+                )}
+                <div className="text-xs text-gray-400 mt-1">
+                  快捷键会在应用后台运行时生效，用于快速呼出窗口。
                 </div>
               </div>
             </div>

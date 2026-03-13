@@ -1,7 +1,21 @@
 use serde::Serialize;
-use std::{io::ErrorKind, path::Path, process::Command};
+use std::{
+    io::ErrorKind,
+    path::Path,
+    process::Command,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Mutex,
+    },
+};
+use tauri::{
+    menu::{Menu, MenuItem},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    Manager, Runtime, WindowEvent,
+};
 use tauri_plugin_autostart::MacosLauncher;
 use tauri::async_runtime::spawn_blocking;
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState as HotKeyState};
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -57,6 +71,30 @@ fn run_adb_process(args: &[&str]) -> Result<AdbCommandResult, String> {
         exit_code: output.status.code(),
         success: output.status.success(),
     })
+}
+
+struct ExitFlag(AtomicBool);
+struct GlobalShortcutState(Mutex<Option<String>>);
+
+fn show_main_window<R: Runtime>(app: &tauri::AppHandle<R>) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
+fn register_global_shortcut<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+    shortcut: &str,
+) -> Result<(), String> {
+    app.global_shortcut()
+        .on_shortcut(shortcut, |app, _, event| {
+            if event.state == HotKeyState::Pressed {
+                show_main_window(app);
+            }
+        })
+        .map_err(|error| format!("快捷键注册失败: {error}"))
 }
 
 async fn run_adb_blocking<T, F>(job: F) -> Result<T, String>
@@ -248,19 +286,142 @@ async fn adb_list_devices() -> Result<AdbDevicesResult, String> {
     })
 }
 
+#[tauri::command]
+fn set_global_shortcut(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, GlobalShortcutState>,
+    shortcut: String,
+) -> Result<(), String> {
+    let next_shortcut = require_non_empty(&shortcut, "快捷键")?;
+    let mut current_shortcut = state
+        .0
+        .lock()
+        .map_err(|error| format!("读取快捷键状态失败: {error}"))?;
+    let previous_shortcut = current_shortcut.clone();
+
+    if previous_shortcut.as_deref() == Some(next_shortcut.as_str()) {
+        return Ok(());
+    }
+
+    if let Some(previous) = previous_shortcut.as_deref() {
+        app.global_shortcut()
+            .unregister(previous)
+            .map_err(|error| format!("卸载旧快捷键失败: {error}"))?;
+    }
+
+    if let Err(error) = register_global_shortcut(&app, &next_shortcut) {
+        if let Some(previous) = previous_shortcut.as_deref() {
+            register_global_shortcut(&app, previous)?;
+        }
+        return Err(error);
+    }
+
+    *current_shortcut = Some(next_shortcut);
+    Ok(())
+}
+
+#[tauri::command]
+fn clear_global_shortcut(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, GlobalShortcutState>,
+) -> Result<(), String> {
+    let mut current_shortcut = state
+        .0
+        .lock()
+        .map_err(|error| format!("读取快捷键状态失败: {error}"))?;
+
+    if let Some(current) = current_shortcut.as_deref() {
+        app.global_shortcut()
+            .unregister(current)
+            .map_err(|error| format!("清除快捷键失败: {error}"))?;
+    }
+
+    *current_shortcut = None;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(ExitFlag(AtomicBool::new(false)))
+        .manage(GlobalShortcutState(Mutex::new(None)))
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .setup(|app| {
+            #[cfg(desktop)]
+            {
+                app.handle().plugin(tauri_plugin_global_shortcut::Builder::new().build())?;
+            }
+
+            let show = MenuItem::with_id(app, "show", "显示主界面", true, None::<&str>)?;
+            let hide = MenuItem::with_id(app, "hide", "隐藏到托盘", true, None::<&str>)?;
+            let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show, &hide, &quit])?;
+            let icon = app
+                .default_window_icon()
+                .cloned()
+                .ok_or("窗口图标缺失，无法创建托盘图标")?;
+
+            TrayIconBuilder::new()
+                .icon(icon)
+                .menu(&menu)
+                .on_menu_event(|app, event| {
+                    match event.id().as_ref() {
+                        "show" => {
+                            show_main_window(app);
+                        }
+                        "hide" => {
+                            if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.hide();
+                            }
+                        }
+                        "quit" => {
+                            if let Some(flag) = app.try_state::<ExitFlag>() {
+                                flag.0.store(true, Ordering::SeqCst);
+                            }
+                            app.exit(0);
+                        }
+                        _ => {}
+                    }
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        let app = tray.app_handle();
+                        show_main_window(&app);
+                    }
+                })
+                .build(app)?;
+
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                let should_exit = window
+                    .app_handle()
+                    .state::<ExitFlag>()
+                    .0
+                    .load(Ordering::SeqCst);
+                if !should_exit {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             greet,
             open_terminal_and_run,
             open_directory,
             adb_pair,
             adb_connect,
-            adb_list_devices
+            adb_list_devices,
+            set_global_shortcut,
+            clear_global_shortcut
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
