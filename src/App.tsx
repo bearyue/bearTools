@@ -2821,9 +2821,10 @@ function App() {
                   <input
                     type="text"
                     value={globalShortcutInput}
-                    readOnly
+                    // 移除 readOnly 以确保 onKeyDown 事件在所有系统上都能正常触发
                     onKeyDown={handleGlobalShortcutKeyDown}
                     onFocus={() => setGlobalShortcutMessage("请直接按下快捷键组合，按 Backspace 可清空输入。")}
+                    onBlur={() => setGlobalShortcutMessage(null)}
                     placeholder="点击这里后按下快捷键"
                     className="flex-1 px-3 py-2.5 text-sm bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
                   />

@@ -183,12 +183,21 @@ fn open_terminal_and_run(path: &str, command: &str) -> Result<(), String> {
     
     #[cfg(target_os = "macos")]
     {
+        // 先激活 Terminal 窗口，使其显示在最前面
+        Command::new("osascript")
+            .args(["-e", "tell app \"Terminal\" to activate"])
+            .spawn()
+            .map_err(|e| e.to_string())?;
+
+        // 等待一小段时间确保 Terminal 被激活
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
         let cmd = if command.is_empty() {
             format!("tell app \"Terminal\" to do script \"cd '{}'\"", path)
         } else {
             format!("tell app \"Terminal\" to do script \"cd '{}' && {}\"", path, command)
         };
-        
+
         Command::new("osascript")
             .args(["-e", &cmd])
             .spawn()
