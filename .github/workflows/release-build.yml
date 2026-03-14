@@ -35,7 +35,36 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Add Rosetta for cross-compile
+        if: matrix.os == 'macos-latest'
+        run: softwareupdate --install-rosetta --agree-to-license
+
+      - name: Build Tauri app (Universal Binary)
+        if: matrix.os == 'macos-latest'
+        run: |
+          # Build for Apple Silicon
+          npm run tauri build
+          # Copy ARM64 build
+          mkdir -p build-universal
+          cp -r src-tauri/target/release/bundle/macos/bearTools.app build-universal/
+
+          # Build for Intel using cross-compile
+          rustup target add x86_64-apple-darwin
+          cargo build --release --target x86_64-apple-darwin -p bearTools
+
+          # Create universal binary
+          lipo -create \
+            build-universal/bearTools.app/Contents/MacOS/bearTools \
+            src-tauri/target/x86_64-apple-darwin/release/bearTools \
+            -output build-universal/bearTools.app/Contents/MacOS/bearTools
+
+          # Replace bundle with universal
+          cp -r build-universal/bearTools.app src-tauri/target/release/bundle/macos/
+        env:
+          CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER: x86_64-apple-darwin-clang
+
       - name: Build Tauri app
+        if: matrix.os != 'macos-latest'
         run: npm run tauri build
 
       - name: Upload release bundles
