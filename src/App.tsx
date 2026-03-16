@@ -1789,16 +1789,25 @@ function JsonFormattedNode({
   value,
   depth,
   propertyKey,
+  path,
+  highlightedPath,
+  onBracketSelect,
   withComma,
   wrapText = false,
 }: {
   value: JsonValue;
   depth: number;
   propertyKey?: string;
+  path: string;
+  highlightedPath?: string | null;
+  onBracketSelect?: (path: string) => void;
   withComma?: boolean;
   wrapText?: boolean;
 }) {
   const paddingLeft = depth * 18;
+  const isHighlighted = highlightedPath === path;
+  const bracketClassName = `text-gray-700 ${isHighlighted ? "bg-amber-300 text-amber-900 font-semibold rounded px-0.5 ring-1 ring-amber-400/60" : ""}`;
+  const guideLeft = Math.max(0, paddingLeft - 2);
 
   const renderPropertyKey = () => (
     propertyKey ? (
@@ -1828,27 +1837,63 @@ function JsonFormattedNode({
   }
 
   const entries = Array.isArray(value)
-    ? value.map((item, index) => ({ key: index.toString(), value: item }))
-    : Object.entries(value).map(([key, nestedValue]) => ({ key, value: nestedValue }));
+    ? value.map((item, index) => ({ key: index.toString(), value: item, path: appendJsonPath(path, index) }))
+    : Object.entries(value).map(([key, nestedValue]) => ({ key, value: nestedValue, path: appendJsonPath(path, key) }));
 
   const openBracket = Array.isArray(value) ? "[" : "{";
   const closeBracket = Array.isArray(value) ? "]" : "}";
 
   if (entries.length === 0) {
     return (
-      <div className={`py-0 font-mono text-sm leading-5 ${wrapText ? "whitespace-pre-wrap break-all" : "whitespace-pre"}`} style={{ paddingLeft }}>
+      <div className="relative">
+        {isHighlighted && (
+          <span
+            className="absolute top-1 bottom-1 w-px bg-amber-400/90"
+            style={{ left: guideLeft }}
+          />
+        )}
+        <div className={`py-0 font-mono text-sm leading-5 ${wrapText ? "whitespace-pre-wrap break-all" : "whitespace-pre"}`} style={{ paddingLeft }}>
         {renderPropertyKey()}
-        <span className="text-gray-700">{openBracket}{closeBracket}</span>
+        <span
+          className={bracketClassName}
+          data-json-path={path}
+          data-json-bracket="open"
+          onMouseDown={() => onBracketSelect?.(path)}
+        >
+          {openBracket}
+        </span>
+        <span
+          className={bracketClassName}
+          data-json-path={path}
+          data-json-bracket="close"
+          onMouseDown={() => onBracketSelect?.(path)}
+        >
+          {closeBracket}
+        </span>
         {withComma && <span className="text-gray-400">,</span>}
+      </div>
       </div>
     );
   }
 
   return (
-    <div>
+    <div className="relative">
+      {isHighlighted && (
+        <span
+          className="absolute top-1 bottom-1 w-px bg-amber-400/90"
+          style={{ left: guideLeft }}
+        />
+      )}
       <div className={`py-0 font-mono text-sm leading-5 text-gray-700 ${wrapText ? "whitespace-pre-wrap break-all" : "whitespace-pre"}`} style={{ paddingLeft }}>
         {renderPropertyKey()}
-        {openBracket}
+        <span
+          className={bracketClassName}
+          data-json-path={path}
+          data-json-bracket="open"
+          onMouseDown={() => onBracketSelect?.(path)}
+        >
+          {openBracket}
+        </span>
       </div>
       {entries.map((entry, index) => (
         <JsonFormattedNode
@@ -1856,12 +1901,22 @@ function JsonFormattedNode({
           value={entry.value}
           depth={depth + 1}
           propertyKey={Array.isArray(value) ? undefined : entry.key}
+          path={entry.path}
+          highlightedPath={highlightedPath}
+          onBracketSelect={onBracketSelect}
           withComma={index < entries.length - 1}
           wrapText={wrapText}
         />
       ))}
       <div className={`py-0 font-mono text-sm leading-5 text-gray-700 ${wrapText ? "whitespace-pre-wrap break-all" : "whitespace-pre"}`} style={{ paddingLeft }}>
-        {closeBracket}
+        <span
+          className={bracketClassName}
+          data-json-path={path}
+          data-json-bracket="close"
+          onMouseDown={() => onBracketSelect?.(path)}
+        >
+          {closeBracket}
+        </span>
         {withComma && <span className="text-gray-400">,</span>}
       </div>
     </div>
@@ -1881,6 +1936,7 @@ function JsonFormatterTool() {
   const [validationInfo, setValidationInfo] = useState<JsonValidationInfo | null>(null);
   const [isResultPreviewOpen, setIsResultPreviewOpen] = useState(false);
   const [wrapResultText, setWrapResultText] = useState(true);
+  const [highlightedJsonPath, setHighlightedJsonPath] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
 
   const expandedPathSet = new Set(expandedPaths);
@@ -2090,11 +2146,41 @@ function JsonFormatterTool() {
     );
   };
 
+  const handleFormattedSelection = (event: React.MouseEvent<HTMLDivElement>) => {
+    const selection = window.getSelection();
+    if (!selection) return;
+
+    const resolveBracketElement = (node: Node | null) => {
+      if (!node) return null;
+      const element = node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
+      return element?.closest?.("[data-json-bracket][data-json-path]") as HTMLElement | null;
+    };
+
+    const bracketElement = resolveBracketElement(selection.anchorNode) || resolveBracketElement(selection.focusNode);
+    if (!bracketElement || !event.currentTarget.contains(bracketElement)) {
+      setHighlightedJsonPath(null);
+      return;
+    }
+
+    const path = bracketElement.getAttribute("data-json-path");
+    setHighlightedJsonPath(path);
+  };
+
   const renderResultContent = (minHeightClass = "min-h-[360px]") => (
     resultTab === "formatted" ? (
-      <div className={`flex-1 ${minHeightClass} rounded-xl border border-gray-200 bg-white p-4 ${wrapResultText ? "overflow-y-auto overflow-x-hidden" : "overflow-auto"}`}>
+      <div
+        className={`flex-1 ${minHeightClass} rounded-xl border border-gray-200 bg-white p-4 ${wrapResultText ? "overflow-y-auto overflow-x-hidden" : "overflow-auto"}`}
+        onMouseUp={handleFormattedSelection}
+      >
         {parsedResult !== undefined ? (
-          <JsonFormattedNode value={parsedResult} depth={0} wrapText={wrapResultText} />
+          <JsonFormattedNode
+            value={parsedResult}
+            depth={0}
+            path={JSON.stringify(["$"])}
+            highlightedPath={highlightedJsonPath}
+            onBracketSelect={setHighlightedJsonPath}
+            wrapText={wrapResultText}
+          />
         ) : (
           <pre className={`font-mono text-sm leading-5 text-gray-700 ${wrapResultText ? "whitespace-pre-wrap break-all" : "whitespace-pre"}`}>
             {formattedResult || "格式化结果将显示在这里..."}
