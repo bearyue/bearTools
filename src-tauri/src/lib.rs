@@ -358,6 +358,12 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            #[cfg(target_os = "macos")]
+            {
+                // Keep the app out of the Dock; use tray/menu to control it.
+                app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            }
+
             #[cfg(desktop)]
             {
                 app.handle().plugin(tauri_plugin_global_shortcut::Builder::new().build())?;
