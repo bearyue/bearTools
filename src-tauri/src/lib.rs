@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     io::ErrorKind,
     path::Path,
@@ -43,6 +43,13 @@ struct AdbDevicesResult {
     exit_code: Option<i32>,
     success: bool,
     devices: Vec<AdbDevice>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TerminalLaunchOptions {
+    app: String,
+    args: Vec<String>,
 }
 
 fn require_non_empty(value: &str, field_name: &str) -> Result<String, String> {
@@ -165,7 +172,31 @@ fn greet(name: &str) -> String {
 }
 
 #[tauri::command]
-fn open_terminal_and_run(path: &str, command: &str) -> Result<(), String> {
+fn open_terminal_and_run(
+    path: &str,
+    command: &str,
+    terminal: Option<TerminalLaunchOptions>,
+) -> Result<(), String> {
+    if let Some(terminal) = terminal {
+        let app = terminal.app.trim();
+        if app.is_empty() {
+            return Err("终端启动程序不能为空".to_string());
+        }
+        if !Path::new(app).is_absolute() {
+            return Err("终端启动程序必须是完整路径".to_string());
+        }
+
+        let mut launch = Command::new(app);
+        if !terminal.args.is_empty() {
+            launch.args(terminal.args);
+        }
+        launch
+            .current_dir(path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
     #[cfg(target_os = "windows")]
     {
         // Use cmd to start powershell. `/D path` sets the working directory for `start`.

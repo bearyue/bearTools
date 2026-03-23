@@ -53,6 +53,17 @@ interface AgentDirectory {
   order?: number; // 用于拖拽排序
 }
 
+interface TerminalConfig {
+  mode: "system" | "custom";
+  appPath: string;
+  argsTemplate: string;
+}
+
+interface TerminalLaunchOptions {
+  app: string;
+  args: string[];
+}
+
 const DEFAULT_COMMANDS: AgentCommand[] = [
   { id: "cmd_claude", name: "Claude", commandText: "claude" },
   { id: "cmd_codex", name: "Codex", commandText: "codex" },
@@ -61,12 +72,28 @@ const DEFAULT_COMMANDS: AgentCommand[] = [
   { id: "cmd_opencode", name: "OpenCode", commandText: "opencode" },
 ];
 
+const getElectermTemplate = (isWindows: boolean) =>
+  isWindows
+    ? `-tp "local" -opts '{"title":"{title}","runScripts":[{"script":"Set-Location -Path \\"{path}\\"","delay":200},{"script":"{command}","delay":500}]}'`
+    : `-tp "local" -opts '{"title":"{title}","runScripts":[{"script":"cd \\"{path}\\"","delay":200},{"script":"{command}","delay":500}]}'`;
+
+const isElectermTemplate = (template: string) =>
+  template === getElectermTemplate(true) || template === getElectermTemplate(false);
+
 export default function AgentLauncher() {
   // === 状态 ===
   const [groups, setGroups] = useState<AgentGroup[]>([]);
   const [commands, setCommands] = useState<AgentCommand[]>([]);
   const [directories, setDirectories] = useState<AgentDirectory[]>([]);
   const [activeGroupId, setActiveGroupId] = useState<string | null>(null);
+  const [terminalConfig, setTerminalConfig] = useState<TerminalConfig>({
+    mode: "system",
+    appPath: "",
+    argsTemplate: "",
+  });
+  const [terminalPreset, setTerminalPreset] = useState<string>("");
+  const [lastLaunchCommand, setLastLaunchCommand] = useState<string>("");
+  const [osPlatform, setOsPlatform] = useState<string | null>(null);
 
   const [initialized, setInitialized] = useState(false);
 
@@ -75,14 +102,16 @@ export default function AgentLauncher() {
   const [cmdModal, setCmdModal] = useState<{ open: boolean; data: Partial<AgentCommand> | null }>({ open: false, data: null });
   const [groupModal, setGroupModal] = useState<{ open: boolean; data: Partial<AgentGroup> | null }>({ open: false, data: null });
   
-  // Settings Tab: 'directories' | 'commands' | 'groups'
-  const [settingsTab, setSettingsTab] = useState<'commands' | 'groups' | null>(null);
+  // Settings Tab: 'commands' | 'groups' | 'terminal'
+  const [settingsTab, setSettingsTab] = useState<'commands' | 'groups' | 'terminal' | null>(null);
 
   // === 初始化数据加载 ===
   useEffect(() => {
     const savedGroups = localStorage.getItem("agent_groups");
     const savedCommands = localStorage.getItem("agent_commands");
     const savedDirs = localStorage.getItem("agent_directories");
+    const savedTerminalConfig = localStorage.getItem("agent_terminal_config");
+    const savedTerminalPreset = localStorage.getItem("agent_terminal_preset");
 
     if (savedGroups) setGroups(JSON.parse(savedGroups));
     else setGroups([{ id: "grp_default", name: "默认组" }]);
@@ -91,6 +120,29 @@ export default function AgentLauncher() {
     else setCommands(DEFAULT_COMMANDS);
 
     if (savedDirs) setDirectories(JSON.parse(savedDirs));
+    if (savedTerminalConfig) setTerminalConfig(JSON.parse(savedTerminalConfig));
+    if (savedTerminalPreset) {
+      setTerminalPreset(savedTerminalPreset);
+    } else if (savedTerminalConfig) {
+      try {
+        const parsedConfig = JSON.parse(savedTerminalConfig) as TerminalConfig;
+        if (isElectermTemplate(parsedConfig.argsTemplate)) {
+          setTerminalPreset("electerm");
+        }
+      } catch {
+        // ignore parse failures
+      }
+    }
+
+    const detected = (() => {
+      if (typeof navigator === "undefined") return null;
+      const ua = navigator.userAgent;
+      if (/windows/i.test(ua)) return "win32";
+      if (/mac/i.test(ua)) return "darwin";
+      if (/linux/i.test(ua)) return "linux";
+      return null;
+    })();
+    setOsPlatform(detected);
 
     setInitialized(true);
   }, []);
@@ -105,11 +157,49 @@ export default function AgentLauncher() {
   useEffect(() => {
     if (initialized) localStorage.setItem("agent_directories", JSON.stringify(directories));
   }, [directories, initialized]);
+  useEffect(() => {
+    if (initialized) localStorage.setItem("agent_terminal_config", JSON.stringify(terminalConfig));
+  }, [terminalConfig, initialized]);
+  useEffect(() => {
+    if (initialized) localStorage.setItem("agent_terminal_preset", terminalPreset);
+  }, [terminalPreset, initialized]);
 
   // === 操作 ===
   const handleOpenTerminal = async (dir: AgentDirectory, cmd: AgentCommand | null) => {
     try {
-      await invoke("open_terminal_and_run", { path: dir.path, command: cmd?.commandText || "" });
+      const commandText = cmd?.commandText || "";
+      const commandName = cmd?.name || "终端";
+      const terminalTitle = `${dir.alias} · ${commandName}`;
+      const isWindows = osPlatform === "win32";
+      const terminalOptions = buildTerminalLaunchOptions(
+        terminalConfig,
+        terminalPreset,
+        dir.path,
+        commandText,
+        terminalTitle,
+        isWindows
+      );
+      if (terminalConfig.mode === "custom" && !terminalOptions) {
+        alert("请先在终端设置中填写第三方终端的启动程序路径。");
+        return;
+      }
+      if (terminalConfig.mode === "custom" && terminalOptions && !isAbsolutePath(terminalOptions.app)) {
+        alert("第三方终端启动程序必须使用完整路径（例如：C:\\Program Files\\Termius\\Termius.exe）。");
+        return;
+      }
+      if (terminalConfig.mode === "custom" && terminalOptions) {
+        const formatted = formatCommandForDisplay(terminalOptions.app, terminalOptions.args);
+        setLastLaunchCommand(formatted);
+        console.log("Terminal launch:", formatted);
+      } else {
+        setLastLaunchCommand("");
+      }
+
+      await invoke("open_terminal_and_run", {
+        path: dir.path,
+        command: commandText,
+        terminal: terminalOptions,
+      });
       // 更新最后使用时间
       setDirectories((prev) =>
         prev.map((d) => (d.id === dir.id ? { ...d, lastUsedAt: Date.now() } : d))
@@ -128,6 +218,33 @@ export default function AgentLauncher() {
       }
     } catch (error) {
       console.error("Failed to open directory picker:", error);
+    }
+  };
+
+  const handleSelectTerminalApp = async () => {
+    try {
+      const selected = await open({
+        directory: false,
+        multiple: false,
+        title: "选择终端启动程序",
+        filters: [
+          { name: "可执行文件", extensions: ["exe", "bat", "cmd", "lnk"] },
+          { name: "全部文件", extensions: ["*"] },
+        ],
+      });
+      if (selected) {
+        const value = selected as string;
+        const lower = value.toLowerCase();
+        const isExecutable =
+          lower.endsWith(".exe") || lower.endsWith(".bat") || lower.endsWith(".cmd") || lower.endsWith(".lnk");
+        if (!isExecutable) {
+          alert("请选择终端可执行文件（.exe/.bat/.cmd/.lnk）。");
+          return;
+        }
+        setTerminalConfig(prev => ({ ...prev, appPath: value }));
+      }
+    } catch (error) {
+      console.error("Failed to open app picker:", error);
     }
   };
 
@@ -305,6 +422,13 @@ export default function AgentLauncher() {
             title="分组管理"
           >
             <Layers size={18} />
+          </button>
+          <button
+            onClick={() => setSettingsTab('terminal')}
+            className="p-2 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-xl transition-colors"
+            title="终端设置"
+          >
+            <Terminal size={18} />
           </button>
         </div>
       </div>
@@ -521,7 +645,16 @@ export default function AgentLauncher() {
 
       {/* 2. 设置面板 (指令/分组) */}
       {settingsTab && (
-        <Modal title={settingsTab === 'commands' ? "指令管理" : "分组管理"} onClose={() => setSettingsTab(null)}>
+        <Modal
+          title={
+            settingsTab === 'commands'
+              ? "指令管理"
+              : settingsTab === 'groups'
+              ? "分组管理"
+              : "终端设置"
+          }
+          onClose={() => setSettingsTab(null)}
+        >
           
           {/* 切换 Tab */}
           <div className="flex border-b border-gray-100 mb-4">
@@ -536,6 +669,12 @@ export default function AgentLauncher() {
               className={`pb-2 px-2 ml-4 text-sm font-medium ${settingsTab === 'groups' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500'}`}
             >
               目录分组
+            </button>
+            <button 
+              onClick={() => setSettingsTab('terminal')} 
+              className={`pb-2 px-2 ml-4 text-sm font-medium ${settingsTab === 'terminal' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500'}`}
+            >
+              终端设置
             </button>
           </div>
 
@@ -581,6 +720,116 @@ export default function AgentLauncher() {
               <button onClick={() => setGroupModal({ open: true, data: null })} className="w-full py-2 border border-dashed border-gray-300 text-gray-500 rounded-lg text-sm hover:border-blue-500 hover:text-blue-600 transition-colors flex items-center justify-center gap-1 mt-2">
                 <Plus size={16} /> 添加分组
               </button>
+            </div>
+          )}
+
+          {/* 终端设置 */}
+          {settingsTab === 'terminal' && (
+            <div className="space-y-4">
+              <div className="flex items-center gap-3">
+                <label className="text-sm font-medium text-gray-700">启动方式</label>
+                <div className="flex items-center gap-3 text-sm">
+                  <label className="flex items-center gap-1.5 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="terminalMode"
+                      checked={terminalConfig.mode === "system"}
+                      onChange={() => setTerminalConfig(prev => ({ ...prev, mode: "system" }))}
+                    />
+                    使用系统终端
+                  </label>
+                  <label className="flex items-center gap-1.5 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="terminalMode"
+                      checked={terminalConfig.mode === "custom"}
+                      onChange={() => setTerminalConfig(prev => ({ ...prev, mode: "custom" }))}
+                    />
+                    使用第三方终端
+                  </label>
+                </div>
+              </div>
+
+              {terminalConfig.mode === "custom" && (
+                <>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">预设模板</label>
+                    <select
+                      value={terminalPreset}
+                      onChange={(e) => {
+                        const nextPreset = e.target.value;
+                        setTerminalPreset(nextPreset);
+                        if (nextPreset === "electerm") {
+                          const isWindowsTemplate = osPlatform === "win32";
+                          setTerminalConfig(prev => ({
+                            ...prev,
+                            argsTemplate: getElectermTemplate(isWindowsTemplate),
+                          }));
+                        }
+                      }}
+                      className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                    >
+                      <option value="">请选择预设</option>
+                      <option value="electerm">Electerm（本地终端）</option>
+                    </select>
+                    <p className="text-xs text-gray-500 mt-1">
+                      选择后会自动填充参数模板，可按你的终端实际参数再调整。
+                    </p>
+                  </div>
+                  {terminalPreset === "electerm" && (
+                    <p className="text-xs text-amber-600">
+                      Electerm 预设使用结构化参数生成命令。若你修改模板，将按模板直接执行。
+                    </p>
+                  )}
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">终端启动程序</label>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={terminalConfig.appPath}
+                        onChange={(e) => setTerminalConfig(prev => ({ ...prev, appPath: e.target.value }))}
+                        placeholder="例如：C:\\Program Files\\Termius\\Termius.exe"
+                        className="flex-1 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 font-mono"
+                      />
+                      <button
+                        onClick={handleSelectTerminalApp}
+                        className="px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-lg text-sm transition-colors shrink-0 border border-gray-200"
+                        title="选择程序"
+                      >
+                        <FolderOpen size={16} />
+                      </button>
+                    </div>
+                    <p className="text-xs text-gray-500 mt-1">建议填写终端可执行文件的完整路径。</p>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">启动参数模板</label>
+                    <input
+                      type="text"
+                      value={terminalConfig.argsTemplate}
+                      onChange={(e) => setTerminalConfig(prev => ({ ...prev, argsTemplate: e.target.value }))}
+                      placeholder={`例如：--cwd "{path}" -e "{command}"`}
+                      className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 font-mono"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      可用变量：{`{path}`} 表示目录路径，{`{command}`} 表示要执行的命令，{`{title}`} 表示终端标题。
+                    </p>
+                  </div>
+
+                  {lastLaunchCommand && (
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">最近启动命令</label>
+                      <textarea
+                        value={lastLaunchCommand}
+                        readOnly
+                        rows={3}
+                        className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-xs font-mono text-gray-600"
+                      />
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           )}
         </Modal>
@@ -645,6 +894,114 @@ export default function AgentLauncher() {
 
     </div>
   );
+}
+
+function buildTerminalLaunchOptions(
+  config: TerminalConfig,
+  preset: string,
+  path: string,
+  command: string,
+  title: string,
+  isWindows: boolean
+): TerminalLaunchOptions | null {
+  if (config.mode !== "custom") return null;
+  const app = config.appPath.trim();
+  if (!app) return null;
+
+  if (preset === "electerm" && isElectermTemplate(config.argsTemplate.trim())) {
+    const args = ["-tp", "local"];
+    const scripts: Array<{ script: string; delay: number }> = [
+      {
+        script: isWindows
+          ? `Set-Location -Path "${path}"`
+          : `cd "${path}"`,
+        delay: 200,
+      },
+    ];
+    if (command.trim()) {
+      scripts.push({ script: command, delay: 500 });
+    } else {
+      scripts.push({ script: "", delay: 500 });
+    }
+    const opts: { title: string; runScripts: Array<{ script: string; delay: number }> } = {
+      title,
+      runScripts: scripts,
+    };
+    args.push("-opts", JSON.stringify(opts));
+    return { app, args };
+  }
+
+  const template = config.argsTemplate || "";
+  const replaced = template
+    .split("{path}")
+    .join(path)
+    .split("{command}")
+    .join(command)
+    .split("{title}")
+    .join(title);
+  const args = parseCommandArgs(replaced);
+  return { app, args };
+}
+
+function parseCommandArgs(input: string): string[] {
+  const args: string[] = [];
+  let current = "";
+  let inQuotes = false;
+  let quoteChar = "";
+
+  for (let i = 0; i < input.length; i += 1) {
+    const ch = input[i];
+
+    if (inQuotes) {
+      if (ch === quoteChar) {
+        inQuotes = false;
+        quoteChar = "";
+      } else {
+        current += ch;
+      }
+      continue;
+    }
+
+    if (ch === "\"" || ch === "'") {
+      inQuotes = true;
+      quoteChar = ch;
+      continue;
+    }
+
+    if (ch === " " || ch === "\t" || ch === "\n") {
+      if (current.length > 0) {
+        args.push(current);
+        current = "";
+      }
+      continue;
+    }
+
+    current += ch;
+  }
+
+  if (current.length > 0) {
+    args.push(current);
+  }
+
+  return args;
+}
+
+function isAbsolutePath(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  if (trimmed.startsWith("\\\\") || trimmed.startsWith("/")) return true;
+  return /^[a-zA-Z]:\\/.test(trimmed);
+}
+
+function formatCommandForDisplay(app: string, args: string[]): string {
+  const quote = (value: string) => {
+    if (value.length === 0) return "\"\"";
+    const needsQuotes = /[\s"]/g.test(value);
+    if (!needsQuotes) return value;
+    return `"${value.split("\"").join("\\\"")}"`;
+  };
+
+  return [quote(app), ...args.map(quote)].join(" ");
 }
 
 // === 辅助组件：可拖拽列表项（用于指令/分组） ===
