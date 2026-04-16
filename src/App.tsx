@@ -42,6 +42,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { invoke } from "@tauri-apps/api/core";
 import { enable as enableAutostart, disable as disableAutostart, isEnabled as isAutostartEnabled } from "@tauri-apps/plugin-autostart";
 import AgentLauncher from "./components/AgentLauncher";
+import bearLogo from "./assets/bear-logo.png";
 
 // =======================
 // 配置区：工具注册表
@@ -3726,9 +3727,11 @@ function App() {
       <aside className="w-[260px] bg-[var(--panel-bg)] border-r border-gray-100 flex flex-col shrink-0 z-20">
         <div className="h-14 flex items-center justify-between px-6 border-b border-gray-100">
           <div className="flex items-center gap-3 cursor-pointer">
-            <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white font-bold text-sm shadow-sm">
-              B
-            </div>
+            <img
+              src={bearLogo}
+              alt="bearTools logo"
+              className="w-8 h-8 rounded-xl object-cover object-center shadow-sm"
+            />
             <span className="font-bold text-lg tracking-tight text-gray-900">
               bearTools
             </span>
