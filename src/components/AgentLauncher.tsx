@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
@@ -105,6 +105,21 @@ export default function AgentLauncher() {
   // Settings Tab: 'commands' | 'groups' | 'terminal'
   const [settingsTab, setSettingsTab] = useState<'commands' | 'groups' | 'terminal' | null>(null);
 
+  const [commandContextMenu, setCommandContextMenu] = useState<{
+    show: boolean;
+    x: number;
+    y: number;
+    dir: AgentDirectory | null;
+    cmd: AgentCommand | null;
+  }>({
+    show: false,
+    x: 0,
+    y: 0,
+    dir: null,
+    cmd: null,
+  });
+  const commandContextMenuRef = useRef<HTMLDivElement | null>(null);
+
   // === 初始化数据加载 ===
   useEffect(() => {
     const savedGroups = localStorage.getItem("agent_groups");
@@ -164,12 +179,36 @@ export default function AgentLauncher() {
     if (initialized) localStorage.setItem("agent_terminal_preset", terminalPreset);
   }, [terminalPreset, initialized]);
 
+  useEffect(() => {
+    if (!commandContextMenu.show) return;
+
+    const handleClose = (event: Event) => {
+      if (commandContextMenuRef.current && commandContextMenuRef.current.contains(event.target as Node)) {
+        return;
+      }
+      setCommandContextMenu(prev => ({ ...prev, show: false }));
+    };
+
+    document.addEventListener("mousedown", handleClose);
+    document.addEventListener("scroll", handleClose, true);
+
+    return () => {
+      document.removeEventListener("mousedown", handleClose);
+      document.removeEventListener("scroll", handleClose, true);
+    };
+  }, [commandContextMenu.show]);
+
   // === 操作 ===
-  const handleOpenTerminal = async (dir: AgentDirectory, cmd: AgentCommand | null) => {
+  const handleOpenTerminal = async (
+    dir: AgentDirectory,
+    cmd: AgentCommand | null,
+    options?: { openInNewWindow?: boolean }
+  ) => {
     try {
       const commandText = cmd?.commandText || "";
       const commandName = cmd?.name || "终端";
-      const terminalTitle = `${dir.alias} · ${commandName}`;
+      const terminalTitle = `${dir.alias} ${commandName}`;
+      const openInNewWindow = options?.openInNewWindow ?? false;
       const isWindows = osPlatform === "win32";
       const terminalOptions = buildTerminalLaunchOptions(
         terminalConfig,
@@ -196,9 +235,13 @@ export default function AgentLauncher() {
       }
 
       await invoke("open_terminal_and_run", {
-        path: dir.path,
-        command: commandText,
-        terminal: terminalOptions,
+        request: {
+          path: dir.path,
+          command: commandText,
+          terminal: terminalOptions,
+          title: terminalTitle,
+          openInNewWindow: openInNewWindow,
+        },
       });
       // 更新最后使用时间
       setDirectories((prev) =>
@@ -208,6 +251,25 @@ export default function AgentLauncher() {
       console.error("Failed to open terminal:", error);
       alert(`启动终端失败: ${error}`);
     }
+  };
+
+  const openCommandContextMenu = (
+    event: React.MouseEvent,
+    dir: AgentDirectory,
+    cmd: AgentCommand | null
+  ) => {
+    event.preventDefault();
+    setCommandContextMenu({
+      show: true,
+      x: event.pageX,
+      y: event.pageY,
+      dir,
+      cmd,
+    });
+  };
+
+  const closeCommandContextMenu = () => {
+    setCommandContextMenu(prev => ({ ...prev, show: false }));
   };
 
   const handleSelectPath = async () => {
@@ -370,6 +432,24 @@ export default function AgentLauncher() {
 
   return (
     <div className="relative flex flex-col h-full bg-[var(--app-bg)] w-full max-w-[1200px] mx-auto p-4 overflow-hidden">
+      {commandContextMenu.show && (
+        <div
+          ref={commandContextMenuRef}
+          className="fixed z-50 bg-white rounded-xl shadow-[0_4px_20px_-4px_rgba(0,0,0,0.15)] border border-gray-100 py-1.5 min-w-[180px] text-sm text-gray-700 animate-in fade-in zoom-in-95 duration-100 origin-top-left"
+          style={{ top: commandContextMenu.y, left: commandContextMenu.x }}
+        >
+          <button
+            className="w-full text-left px-4 py-2 hover:bg-gray-50 transition-colors"
+            onClick={() => {
+              if (!commandContextMenu.dir) return;
+              void handleOpenTerminal(commandContextMenu.dir, commandContextMenu.cmd, { openInNewWindow: true });
+              closeCommandContextMenu();
+            }}
+          >
+            新建终端（新窗口）
+          </button>
+        </div>
+      )}
 
       {/* 顶栏控制区 */}
       <div className="flex items-center justify-between mb-3 bg-white p-2.5 px-4 rounded-2xl shadow-sm border border-gray-100 shrink-0">
@@ -483,6 +563,7 @@ export default function AgentLauncher() {
                 <div className="mt-2.5 pt-2.5 border-t border-gray-50 flex flex-wrap gap-2">
                   <button
                     onClick={() => handleOpenTerminal(dir, null)}
+                    onContextMenu={(event) => openCommandContextMenu(event, dir, null)}
                     className="flex items-center gap-2 px-4 py-1.5 rounded-xl text-sm font-medium transition-all bg-gray-50 text-gray-700 hover:bg-gray-100 border border-gray-200 active:scale-[0.98]"
                   >
                     <Terminal size={14} className="text-gray-400" />
@@ -492,6 +573,7 @@ export default function AgentLauncher() {
                     <button
                       key={cmd.id}
                       onClick={() => handleOpenTerminal(dir, cmd)}
+                      onContextMenu={(event) => openCommandContextMenu(event, dir, cmd)}
                       className="flex items-center gap-2 px-4 py-1.5 rounded-xl text-sm font-medium transition-all bg-gray-50 text-gray-700 hover:bg-gray-100 border border-gray-200 active:scale-[0.98]"
                     >
                       <Sparkles size={14} className="text-gray-400" />
@@ -552,6 +634,7 @@ export default function AgentLauncher() {
                       <div className="mt-2.5 pt-2.5 border-t border-gray-50 flex flex-wrap gap-2">
                         <button
                           onClick={() => handleOpenTerminal(dir, null)}
+                          onContextMenu={(event) => openCommandContextMenu(event, dir, null)}
                           className="flex items-center gap-2 px-4 py-1.5 rounded-xl text-sm font-medium transition-all bg-gray-50 text-gray-700 hover:bg-gray-100 border border-gray-200 active:scale-[0.98]"
                         >
                           <Terminal size={14} className="text-gray-400" />
@@ -561,6 +644,7 @@ export default function AgentLauncher() {
                           <button
                             key={cmd.id}
                             onClick={() => handleOpenTerminal(dir, cmd)}
+                            onContextMenu={(event) => openCommandContextMenu(event, dir, cmd)}
                             className="flex items-center gap-2 px-4 py-1.5 rounded-xl text-sm font-medium transition-all bg-gray-50 text-gray-700 hover:bg-gray-100 border border-gray-200 active:scale-[0.98]"
                           >
                             <Sparkles size={14} className="text-gray-400" />
@@ -1083,3 +1167,5 @@ function Modal({ title, children, onClose, zIndex = "z-50" }: { title: string, c
     </div>
   );
 }
+
+

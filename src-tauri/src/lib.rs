@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::{
+    fs,
     io::ErrorKind,
     path::Path,
     process::Command,
@@ -7,6 +8,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Mutex,
     },
+    time::{SystemTime, UNIX_EPOCH},
 };
 use tauri::{
     menu::{Menu, MenuItem},
@@ -52,6 +54,15 @@ struct TerminalLaunchOptions {
     args: Vec<String>,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OpenTerminalRequest {
+    path: String,
+    command: String,
+    terminal: Option<TerminalLaunchOptions>,
+    title: Option<String>,
+    open_in_new_window: Option<bool>,
+}
 fn require_non_empty(value: &str, field_name: &str) -> Result<String, String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -165,6 +176,131 @@ fn parse_adb_devices(stdout: &str) -> Vec<AdbDevice> {
         .collect()
 }
 
+#[cfg(target_os = "windows")]
+fn resolve_cmd_path() -> String {
+    if let Ok(system_root) = std::env::var("SystemRoot") {
+        let candidate = format!(
+            "{}\\System32\\cmd.exe",
+            system_root.trim_end_matches('\\')
+        );
+        if Path::new(&candidate).is_file() {
+            return candidate;
+        }
+    }
+
+    "cmd.exe".to_string()
+}
+
+#[cfg(target_os = "windows")]
+fn escape_cmd_text(value: &str) -> String {
+    value
+        .replace('^', "^^")
+        .replace('&', "^&")
+        .replace('|', "^|")
+        .replace('<', "^<")
+        .replace('>', "^>")
+        .replace('"', "^\"")
+}
+
+#[cfg(target_os = "windows")]
+fn launch_cmd_console_payload(path: &str, payload: &str) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+
+    const CREATE_NEW_CONSOLE: u32 = 0x00000010;
+    let cmd_path = resolve_cmd_path();
+    Command::new(cmd_path)
+        .args(["/K", payload])
+        .creation_flags(CREATE_NEW_CONSOLE)
+        .current_dir(path)
+        .spawn()
+        .map(|_| ())
+        .map_err(|err| err.to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn resolve_powershell_path() -> Option<String> {
+    if let Ok(system_root) = std::env::var("SystemRoot") {
+        let candidate = format!(
+            "{}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+            system_root.trim_end_matches('\\')
+        );
+        if Path::new(&candidate).is_file() {
+            return Some(candidate);
+        }
+    }
+
+    None
+}
+
+#[cfg(target_os = "windows")]
+fn escape_powershell_single_quotes(value: &str) -> String {
+    value.replace('\'', "''")
+}
+
+#[cfg(target_os = "windows")]
+fn build_powershell_script(path: &str, title: &str, command: &str) -> String {
+    let escaped_path = escape_powershell_single_quotes(path);
+    let escaped_title = escape_powershell_single_quotes(title);
+
+    let mut statements = vec![
+        format!("Set-Location -LiteralPath '{}'", escaped_path),
+        format!("$host.UI.RawUI.WindowTitle='{}'", escaped_title),
+    ];
+    if !command.trim().is_empty() {
+        statements.push(command.to_string());
+    }
+    statements.push("Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force".to_string());
+    statements.join("; ")
+}
+
+#[cfg(target_os = "windows")]
+fn build_cmd_payload_for_powershell(
+    path: &str,
+    title: &str,
+    command: &str,
+) -> Result<String, String> {
+    let ps_command = build_powershell_script(path, title, command);
+    let script_path = create_powershell_script(&ps_command)?;
+    let powershell_path = resolve_powershell_path().unwrap_or_else(|| "powershell".to_string());
+    let escaped_path = escape_cmd_text(path);
+    let escaped_ps = escape_cmd_text(&powershell_path);
+    let escaped_script = escape_cmd_text(&script_path);
+
+    Ok(format!(
+        "cd /d \"{}\" & \"{}\" -NoExit -ExecutionPolicy Bypass -File \"{}\"",
+        escaped_path, escaped_ps, escaped_script
+    ))
+}
+
+#[cfg(target_os = "windows")]
+fn create_powershell_script(script_body: &str) -> Result<String, String> {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("生成脚本时间失败: {error}"))?
+        .as_millis();
+    let file_name = format!("beartools_terminal_{timestamp}.ps1");
+    let script_path = std::env::temp_dir().join(file_name);
+    let mut content = Vec::with_capacity(script_body.len() + 3);
+    // UTF-8 BOM for Windows PowerShell 5.1 compatibility
+    content.extend_from_slice(&[0xEF, 0xBB, 0xBF]);
+    content.extend_from_slice(script_body.as_bytes());
+    fs::write(&script_path, content).map_err(|error| format!("写入临时脚本失败: {error}"))?;
+    script_path
+        .to_str()
+        .map(|value| value.to_string())
+        .ok_or_else(|| "脚本路径包含无法识别的字符".to_string())
+}
+
+
+#[cfg(target_os = "macos")]
+fn escape_applescript_string(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+#[cfg(target_os = "macos")]
+fn escape_shell_single_quotes(value: &str) -> String {
+    value.replace('\'', "'\"'\"'")
+}
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -173,10 +309,17 @@ fn greet(name: &str) -> String {
 
 #[tauri::command]
 fn open_terminal_and_run(
-    path: &str,
-    command: &str,
-    terminal: Option<TerminalLaunchOptions>,
+    request: OpenTerminalRequest,
 ) -> Result<(), String> {
+    let OpenTerminalRequest {
+        path,
+        command,
+        terminal,
+        title,
+        open_in_new_window,
+    } = request;
+    let title = title.unwrap_or_else(|| "终端".to_string());
+    let open_in_new_window = open_in_new_window.unwrap_or(false);
     if let Some(terminal) = terminal {
         let app = terminal.app.trim();
         if app.is_empty() {
@@ -191,7 +334,7 @@ fn open_terminal_and_run(
             launch.args(terminal.args);
         }
         launch
-            .current_dir(path)
+            .current_dir(&path)
             .spawn()
             .map_err(|e| e.to_string())?;
         return Ok(());
@@ -199,17 +342,36 @@ fn open_terminal_and_run(
 
     #[cfg(target_os = "windows")]
     {
-        // Use cmd to start powershell. `/D path` sets the working directory for `start`.
-        let mut args = vec!["/C", "start", "/D", path, "powershell", "-NoExit"];
-        if !command.is_empty() {
-            args.push("-Command");
-            args.push(command);
+        let cmd_path = resolve_cmd_path();
+        let cmd_payload = build_cmd_payload_for_powershell(&path, &title, &command)?;
+        let mut wt_args: Vec<String> = Vec::new();
+        wt_args.push("-w".to_string());
+        wt_args.push(if open_in_new_window { "-1".to_string() } else { "0".to_string() });
+        wt_args.push("new-tab".to_string());
+        wt_args.push("-d".to_string());
+        wt_args.push(path.to_string());
+        wt_args.push("--title".to_string());
+        wt_args.push(title.clone());
+
+        let mut need_fallback = false;
+        wt_args.push("--".to_string());
+        wt_args.push(cmd_path);
+        wt_args.push("/K".to_string());
+        wt_args.push(cmd_payload.clone());
+
+        match Command::new("wt").args(&wt_args).spawn() {
+            Ok(_) => {}
+            Err(error) if error.kind() == ErrorKind::NotFound => {
+                need_fallback = true;
+            }
+            Err(_) => {
+                need_fallback = true;
+            }
         }
-        
-        Command::new("cmd")
-            .args(&args)
-            .spawn()
-            .map_err(|e| e.to_string())?;
+
+        if need_fallback {
+            launch_cmd_console_payload(&path, &cmd_payload)?;
+        }
     }
     
     #[cfg(target_os = "macos")]
@@ -223,10 +385,23 @@ fn open_terminal_and_run(
         // 等待一小段时间确保 Terminal 被激活
         std::thread::sleep(std::time::Duration::from_millis(100));
 
-        let cmd = if command.is_empty() {
-            format!("tell app \"Terminal\" to do script \"cd '{}'\"", path)
+        let escaped_path = escape_shell_single_quotes(&path);
+        let escaped_title = escape_shell_single_quotes(&title);
+        let title_script = format!("printf '\\e]0;{}\\a'", escaped_title);
+        let shell_cmd_raw = if command.is_empty() {
+            format!("cd '{}' && {}", escaped_path, title_script)
         } else {
-            format!("tell app \"Terminal\" to do script \"cd '{}' && {}\"", path, command)
+            format!("cd '{}' && {} && {}", escaped_path, title_script, command)
+        };
+        let shell_cmd = escape_applescript_string(&shell_cmd_raw);
+
+        let cmd = if open_in_new_window {
+            format!("tell app \"Terminal\" to do script \"{}\"", shell_cmd)
+        } else {
+            format!(
+                "tell app \"Terminal\"\nif (count of windows) is 0 then\n  do script \"{}\"\nelse\n  do script \"{}\" in window 1\nend if\nend tell",
+                shell_cmd, shell_cmd
+            )
         };
 
         Command::new("osascript")
@@ -237,10 +412,13 @@ fn open_terminal_and_run(
     
     #[cfg(target_os = "linux")]
     {
+        let _ = open_in_new_window;
+        let escaped_title = title.replace('\'', "'\\''");
+        let title_script = format!("printf '\\e]0;{}\\a'", escaped_title);
         let cmd = if command.is_empty() {
-            format!("x-terminal-emulator -e 'cd {} && exec $SHELL'", path)
+            format!("x-terminal-emulator -e 'cd {} && {}; exec $SHELL'", path, title_script)
         } else {
-            format!("x-terminal-emulator -e 'cd {} && {}; exec $SHELL'", path, command)
+            format!("x-terminal-emulator -e 'cd {} && {} && {}; exec $SHELL'", path, title_script, command)
         };
         
         Command::new("sh")
@@ -472,3 +650,11 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
+
+
+
+
+
+
+
+
