@@ -16,6 +16,7 @@ import {
   X,
   Plus,
   Bot,
+  Logs,
   ArrowLeft,
   RotateCcw,
   RefreshCw,
@@ -42,6 +43,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { invoke } from "@tauri-apps/api/core";
 import { enable as enableAutostart, disable as disableAutostart, isEnabled as isAutostartEnabled } from "@tauri-apps/plugin-autostart";
 import AgentLauncher from "./components/AgentLauncher";
+import JxLogTool from "./components/JxLogTool";
 import bearLogo from "./assets/bear-logo.png";
 
 // =======================
@@ -49,6 +51,7 @@ import bearLogo from "./assets/bear-logo.png";
 // =======================
 const INITIAL_TOOLS = [
   { id: "agent-launcher", name: "Agent 启动", icon: Bot, singleton: true },
+  { id: "jxlog", name: "jxLog", icon: Logs, singleton: true },
   { id: "adb", name: "ADB WiFi 配对", icon: Smartphone, singleton: true },
   { id: "url-encode", name: "URL 编解码", icon: LinkIcon },
   { id: "json-formatter", name: "JSON 格式化", icon: Braces },
@@ -3811,6 +3814,7 @@ function App() {
             // === 单例模式：直接渲染组件 ===
             <div className="absolute inset-0 z-10">
               {activeToolId === "agent-launcher" && <AgentLauncher />}
+              {activeToolId === "jxlog" && <JxLogTool />}
               {activeToolId === "adb" && (
                 <div className="absolute inset-0 p-4 overflow-auto">
                   <AdbTool />
