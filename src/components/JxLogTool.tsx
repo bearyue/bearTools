@@ -176,6 +176,9 @@ const sanitizeExecutionResult = (value: JxLogExecutionResult): JxLogExecutionRes
 
 const normalizeExecutionResult = (value: unknown): JxLogExecutionResult => {
   const source = (typeof value === "object" && value !== null ? value : {}) as Record<string, unknown>;
+  const diagnostics = source.diagnostics && typeof source.diagnostics === "object" && source.diagnostics !== null
+    ? source.diagnostics as Record<string, unknown>
+    : null;
   return {
     command: toSafeText(source.command),
     stdout: toSafeText(source.stdout),
@@ -184,19 +187,19 @@ const normalizeExecutionResult = (value: unknown): JxLogExecutionResult => {
     success: Boolean(source.success),
     outputPath: source.outputPath ? toSafeText(source.outputPath) : null,
     diagnostics: {
-      requestedProfile: source.diagnostics && typeof source.diagnostics === "object" && source.diagnostics !== null && source.diagnostics.requestedProfile ? toSafeText((source.diagnostics as Record<string, unknown>).requestedProfile) : null,
-      resolvedProfile: source.diagnostics && typeof source.diagnostics === "object" && source.diagnostics !== null && source.diagnostics.resolvedProfile ? toSafeText((source.diagnostics as Record<string, unknown>).resolvedProfile) : null,
-      configIniPath: source.diagnostics && typeof source.diagnostics === "object" && source.diagnostics !== null ? toSafeText((source.diagnostics as Record<string, unknown>).configIniPath) : "(空)",
-      projectMapPath: source.diagnostics && typeof source.diagnostics === "object" && source.diagnostics !== null ? toSafeText((source.diagnostics as Record<string, unknown>).projectMapPath) : "(空)",
-      source: source.diagnostics && typeof source.diagnostics === "object" && source.diagnostics !== null && (source.diagnostics as Record<string, unknown>).source ? toSafeText((source.diagnostics as Record<string, unknown>).source) : null,
-      url: source.diagnostics && typeof source.diagnostics === "object" && source.diagnostics !== null && (source.diagnostics as Record<string, unknown>).url ? toSafeText((source.diagnostics as Record<string, unknown>).url) : null,
-      user: source.diagnostics && typeof source.diagnostics === "object" && source.diagnostics !== null && (source.diagnostics as Record<string, unknown>).user ? toSafeText((source.diagnostics as Record<string, unknown>).user) : null,
-      hosts: source.diagnostics && typeof source.diagnostics === "object" && source.diagnostics !== null && Array.isArray((source.diagnostics as Record<string, unknown>).hosts)
-        ? ((source.diagnostics as Record<string, unknown>).hosts as unknown[]).map((item) => toSafeText(item))
+      requestedProfile: diagnostics?.requestedProfile ? toSafeText(diagnostics.requestedProfile) : null,
+      resolvedProfile: diagnostics?.resolvedProfile ? toSafeText(diagnostics.resolvedProfile) : null,
+      configIniPath: diagnostics ? toSafeText(diagnostics.configIniPath) : "(空)",
+      projectMapPath: diagnostics ? toSafeText(diagnostics.projectMapPath) : "(空)",
+      source: diagnostics?.source ? toSafeText(diagnostics.source) : null,
+      url: diagnostics?.url ? toSafeText(diagnostics.url) : null,
+      user: diagnostics?.user ? toSafeText(diagnostics.user) : null,
+      hosts: diagnostics && Array.isArray(diagnostics.hosts)
+        ? diagnostics.hosts.map((item) => toSafeText(item))
         : [],
-      path: source.diagnostics && typeof source.diagnostics === "object" && source.diagnostics !== null && (source.diagnostics as Record<string, unknown>).path ? toSafeText((source.diagnostics as Record<string, unknown>).path) : null,
-      requestTargets: source.diagnostics && typeof source.diagnostics === "object" && source.diagnostics !== null && Array.isArray((source.diagnostics as Record<string, unknown>).requestTargets)
-        ? ((source.diagnostics as Record<string, unknown>).requestTargets as unknown[]).map((item) => toSafeText(item))
+      path: diagnostics?.path ? toSafeText(diagnostics.path) : null,
+      requestTargets: diagnostics && Array.isArray(diagnostics.requestTargets)
+        ? diagnostics.requestTargets.map((item) => toSafeText(item))
         : [],
     },
   };
