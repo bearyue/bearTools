@@ -1,4 +1,6 @@
 use serde::{Deserialize, Serialize};
+#[cfg(target_os = "windows")]
+use std::time::{SystemTime, UNIX_EPOCH};
 use std::{
     fs,
     io::ErrorKind,
@@ -8,7 +10,6 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Mutex,
     },
-    time::{SystemTime, UNIX_EPOCH},
 };
 use tauri::async_runtime::spawn_blocking;
 use tauri::{
@@ -1153,15 +1154,6 @@ fn open_terminal_and_run(request: OpenTerminalRequest) -> Result<(), String> {
 
     #[cfg(target_os = "macos")]
     {
-        // 先激活 Terminal 窗口，使其显示在最前面
-        Command::new("osascript")
-            .args(["-e", "tell app \"Terminal\" to activate"])
-            .spawn()
-            .map_err(|e| e.to_string())?;
-
-        // 等待一小段时间确保 Terminal 被激活
-        std::thread::sleep(std::time::Duration::from_millis(100));
-
         let escaped_path = escape_shell_single_quotes(&path);
         let escaped_title = escape_shell_single_quotes(&title);
         let title_script = format!("printf '\\e]0;{}\\a'", escaped_title);
@@ -1176,7 +1168,7 @@ fn open_terminal_and_run(request: OpenTerminalRequest) -> Result<(), String> {
             format!("tell app \"Terminal\" to do script \"{}\"", shell_cmd)
         } else {
             format!(
-                "tell app \"Terminal\"\nif (count of windows) is 0 then\n  do script \"{}\"\nelse\n  do script \"{}\" in window 1\nend if\nend tell",
+                "tell app \"Terminal\"\n  activate\n  if (count of windows) is 0 then\n    do script \"{}\"\n  else\n    delay 0.1\n    tell app \"System Events\" to keystroke \"t\" using command down\n    delay 0.1\n    do script \"{}\" in selected tab of front window\n  end if\nend tell",
                 shell_cmd, shell_cmd
             )
         };
