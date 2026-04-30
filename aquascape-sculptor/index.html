@@ -1,0 +1,1004 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>洞穴鱼缸造景 3D 雕刻生成器</title>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+
+  <style>
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; }
+    body {
+      margin: 0;
+      overflow: hidden;
+      font-family: Arial, "Microsoft YaHei", sans-serif;
+      background: #101010;
+      color: #eee;
+      user-select: none;
+    }
+    #panel {
+      position: fixed;
+      left: 16px;
+      top: 16px;
+      z-index: 20;
+      width: 360px;
+      max-height: calc(100vh - 32px);
+      overflow: auto;
+      padding: 14px;
+      border-radius: 12px;
+      background: rgba(18, 18, 18, 0.93);
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.42);
+      backdrop-filter: blur(8px);
+    }
+    #panel h2 {
+      margin: 0 0 6px;
+      font-size: 18px;
+      line-height: 1.35;
+    }
+    .desc {
+      margin: 0 0 10px;
+      color: #aaa;
+      font-size: 12px;
+      line-height: 1.55;
+    }
+    .section {
+      margin-top: 14px;
+      color: #7dd3fc;
+      font-size: 13px;
+      font-weight: bold;
+    }
+    .row { margin: 9px 0; }
+    label {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 4px;
+      color: #ddd;
+      font-size: 13px;
+    }
+    input[type="range"] { width: 100%; }
+    .tool-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 7px;
+      margin-top: 8px;
+    }
+    button {
+      border: 0;
+      border-radius: 8px;
+      padding: 9px 8px;
+      background: #303030;
+      color: #eee;
+      font-weight: bold;
+      cursor: pointer;
+      transition: background .15s, color .15s, transform .05s;
+    }
+    button:hover { background: #3d3d3d; }
+    button:active { transform: translateY(1px); }
+    button.primary {
+      width: 100%;
+      margin-top: 8px;
+      background: #38bdf8;
+      color: #00131f;
+    }
+    button.primary:hover { background: #7dd3fc; }
+    button.danger { background: #553030; }
+    button.danger:hover { background: #6a3a3a; }
+    button.active {
+      background: #38bdf8;
+      color: #00131f;
+    }
+    .button-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-top: 8px;
+    }
+    .button-row.three {
+      grid-template-columns: 1fr 1fr 1fr;
+    }
+    .hint {
+      margin-top: 10px;
+      color: #aaa;
+      font-size: 12px;
+      line-height: 1.55;
+    }
+    .warn { color: #fbbf24; }
+    #testResult {
+      margin-top: 10px;
+      padding: 8px;
+      border-radius: 8px;
+      background: rgba(255,255,255,.06);
+      font-size: 12px;
+      line-height: 1.45;
+      color: #ddd;
+      white-space: pre-wrap;
+    }
+    #selectBox {
+      position: fixed;
+      pointer-events: none;
+      z-index: 15;
+      display: none;
+      border: 1px dashed #facc15;
+      background: rgba(250, 204, 21, 0.12);
+    }
+    #status {
+      position: fixed;
+      right: 16px;
+      bottom: 16px;
+      z-index: 10;
+      padding: 8px 10px;
+      border-radius: 8px;
+      background: rgba(18,18,18,.82);
+      color: #ddd;
+      font-size: 12px;
+      line-height: 1.45;
+      max-width: 460px;
+    }
+    @media (max-width: 760px) {
+      #panel {
+        left: 8px;
+        top: 8px;
+        width: calc(100vw - 16px);
+      }
+      #status { display: none; }
+    }
+  </style>
+</head>
+<body>
+<div id="panel">
+  <h2>洞穴鱼缸造景雕刻生成器</h2>
+  <div class="desc">
+    初始是一块带厚度的实体地台。你可以刷出起伏、框选区域整体拉伸、点击开洞，最后导出 STL。
+  </div>
+
+  <div class="section">工具</div>
+  <div class="tool-grid">
+    <button id="toolOrbit" class="active" data-tool="orbit">浏览旋转</button>
+    <button id="toolRaise" data-tool="raise">抬高</button>
+    <button id="toolLower" data-tool="lower">压低</button>
+    <button id="toolSmooth" data-tool="smooth">平滑</button>
+    <button id="toolHole" data-tool="hole">开圆洞</button>
+    <button id="toolSelect" data-tool="select">框选</button>
+  </div>
+
+  <div class="section">地台尺寸</div>
+  <div class="row"><label>宽度 mm <span id="widthVal"></span></label><input id="width" type="range" min="80" max="350" value="180"></div>
+  <div class="row"><label>深度 mm <span id="depthVal"></span></label><input id="depth" type="range" min="60" max="240" value="110"></div>
+  <div class="row"><label>基础厚度 mm <span id="baseVal"></span></label><input id="baseThickness" type="range" min="4" max="30" value="10"></div>
+
+  <div class="section">笔刷参数</div>
+  <div class="row"><label>笔刷半径 mm <span id="brushRadiusVal"></span></label><input id="brushRadius" type="range" min="4" max="60" value="20"></div>
+  <div class="row"><label>笔刷强度 mm <span id="brushStrengthVal"></span></label><input id="brushStrength" type="range" min="1" max="18" value="5"></div>
+  <div class="row"><label>洞半径 mm <span id="holeRadiusVal"></span></label><input id="holeRadius" type="range" min="4" max="55" value="18"></div>
+
+  <div class="section">框选操作</div>
+  <div class="row"><label>选区拉伸步长 mm <span id="selectStepVal"></span></label><input id="selectStep" type="range" min="1" max="30" value="8"></div>
+  <div class="button-row three">
+    <button id="selRaise">选区抬高</button>
+    <button id="selLower">选区压低</button>
+    <button id="selSmooth">选区平滑</button>
+  </div>
+  <div class="button-row">
+    <button id="clearSelection">清空选区</button>
+    <button id="naturalize">自然起伏</button>
+  </div>
+
+  <div class="section">工程操作</div>
+  <div class="button-row three">
+    <button id="undoBtn">撤销</button>
+    <button id="redoBtn">重做</button>
+    <button id="resetBtn" class="danger">重置</button>
+  </div>
+  <button id="exportBtn" class="primary">导出 STL</button>
+
+  <div class="hint">
+    操作：<br>
+    1. 选择“浏览旋转”后拖动视角。<br>
+    2. 选择“抬高 / 压低 / 平滑”后，在模型上按住左键刷。<br>
+    3. 选择“框选”后拖出矩形，再点“选区抬高 / 压低 / 平滑”。<br>
+    4. 选择“开圆洞”后，点击模型位置开垂直通孔。<br>
+    <span class="warn">注意：这是高度场雕刻版，洞口边缘是网格化的。真实打印建议 PETG，切片后检查是否需要支撑。</span>
+  </div>
+
+  <div id="testResult">自检中...</div>
+</div>
+
+<div id="selectBox"></div>
+<div id="status">当前工具：浏览旋转</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { STLExporter } from 'three/addons/exporters/STLExporter.js';
+
+const $ = (id) => document.getElementById(id);
+
+let scene;
+let camera;
+let renderer;
+let controls;
+let terrainMesh;
+let brushRing;
+let selectionPoints;
+let raycaster;
+let pointer;
+
+const state = {
+  cols: 110,
+  rows: 72,
+  heights: null,
+  holes: [],
+  selected: null,
+  history: [],
+  redo: [],
+  tool: 'orbit',
+  pointerDown: false,
+  selectionStart: null
+};
+
+const ui = {
+  width: $('width'),
+  depth: $('depth'),
+  baseThickness: $('baseThickness'),
+  brushRadius: $('brushRadius'),
+  brushStrength: $('brushStrength'),
+  holeRadius: $('holeRadius'),
+  selectStep: $('selectStep')
+};
+
+const toolButtons = Array.from(document.querySelectorAll('[data-tool]'));
+const selectBox = $('selectBox');
+
+initState();
+initThree();
+bindEvents();
+runTests();
+rebuild();
+updateLabels();
+setTool('orbit');
+animate();
+
+function initState() {
+  state.heights = new Float32Array((state.cols + 1) * (state.rows + 1));
+  state.selected = new Uint8Array((state.cols + 1) * (state.rows + 1));
+}
+
+function initThree() {
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x101010);
+
+  camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 5000);
+  camera.position.set(210, 165, 230);
+
+  renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  document.body.appendChild(renderer.domElement);
+
+  controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.target.set(0, 8, 0);
+
+  raycaster = new THREE.Raycaster();
+  pointer = new THREE.Vector2();
+
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x333333, 1.35));
+
+  const light1 = new THREE.DirectionalLight(0xffffff, 1.25);
+  light1.position.set(180, 260, 140);
+  scene.add(light1);
+
+  const light2 = new THREE.DirectionalLight(0xffffff, 0.5);
+  light2.position.set(-160, 110, -140);
+  scene.add(light2);
+
+  const grid = new THREE.GridHelper(520, 26, 0x444444, 0x222222);
+  scene.add(grid);
+
+  const axes = new THREE.AxesHelper(70);
+  axes.position.set(-180, 1, -120);
+  scene.add(axes);
+
+  brushRing = createBrushRing();
+  scene.add(brushRing);
+
+  window.addEventListener('resize', onResize);
+}
+
+function createBrushRing() {
+  const points = [];
+  const n = 96;
+  for (let i = 0; i < n; i++) {
+    const a = Math.PI * 2 * i / n;
+    points.push(new THREE.Vector3(Math.cos(a), 0, Math.sin(a)));
+  }
+  const geometry = new THREE.BufferGeometry().setFromPoints(points);
+  const material = new THREE.LineBasicMaterial({ color: 0xfacc15 });
+  const line = new THREE.LineLoop(geometry, material);
+  line.visible = false;
+  return line;
+}
+
+function bindEvents() {
+  toolButtons.forEach((btn) => {
+    btn.addEventListener('click', () => setTool(btn.dataset.tool));
+  });
+
+  for (const input of Object.values(ui)) {
+    input.addEventListener('input', () => {
+      updateLabels();
+      if (input === ui.width || input === ui.depth || input === ui.baseThickness) {
+        rebuild();
+        updateSelectionVisual();
+      }
+    });
+  }
+
+  $('selRaise').addEventListener('click', () => applySelectionHeight(getParams().selectStep));
+  $('selLower').addEventListener('click', () => applySelectionHeight(-getParams().selectStep));
+  $('selSmooth').addEventListener('click', () => smoothSelection());
+  $('clearSelection').addEventListener('click', clearSelection);
+  $('naturalize').addEventListener('click', naturalizeTerrain);
+  $('undoBtn').addEventListener('click', undo);
+  $('redoBtn').addEventListener('click', redo);
+  $('resetBtn').addEventListener('click', resetTerrain);
+  $('exportBtn').addEventListener('click', exportSTL);
+
+  renderer.domElement.addEventListener('pointerdown', onPointerDown);
+  renderer.domElement.addEventListener('pointermove', onPointerMove);
+  renderer.domElement.addEventListener('pointerup', onPointerUp);
+  renderer.domElement.addEventListener('pointerleave', onPointerLeave);
+  renderer.domElement.addEventListener('contextmenu', (e) => e.preventDefault());
+}
+
+function setTool(tool) {
+  state.tool = tool;
+  controls.enabled = tool === 'orbit';
+  brushRing.visible = false;
+
+  toolButtons.forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.tool === tool);
+  });
+
+  const names = {
+    orbit: '浏览旋转',
+    raise: '抬高',
+    lower: '压低',
+    smooth: '平滑',
+    hole: '开圆洞',
+    select: '框选'
+  };
+
+  $('status').textContent = `当前工具：${names[tool] || tool}`;
+}
+
+function getParams() {
+  return {
+    width: Number(ui.width.value),
+    depth: Number(ui.depth.value),
+    baseThickness: Number(ui.baseThickness.value),
+    brushRadius: Number(ui.brushRadius.value),
+    brushStrength: Number(ui.brushStrength.value),
+    holeRadius: Number(ui.holeRadius.value),
+    selectStep: Number(ui.selectStep.value)
+  };
+}
+
+function updateLabels() {
+  const p = getParams();
+  $('widthVal').textContent = p.width;
+  $('depthVal').textContent = p.depth;
+  $('baseVal').textContent = p.baseThickness;
+  $('brushRadiusVal').textContent = p.brushRadius;
+  $('brushStrengthVal').textContent = p.brushStrength;
+  $('holeRadiusVal').textContent = p.holeRadius;
+  $('selectStepVal').textContent = p.selectStep;
+}
+
+function vertexIndex(c, r) {
+  return r * (state.cols + 1) + c;
+}
+
+function cellCenter(c, r, p) {
+  return {
+    x: -p.width / 2 + p.width * (c + 0.5) / state.cols,
+    z: -p.depth / 2 + p.depth * (r + 0.5) / state.rows
+  };
+}
+
+function vertexPosition(c, r, p) {
+  const i = vertexIndex(c, r);
+  return {
+    x: -p.width / 2 + p.width * c / state.cols,
+    y: p.baseThickness + state.heights[i],
+    z: -p.depth / 2 + p.depth * r / state.rows
+  };
+}
+
+function isCellInHole(c, r, p) {
+  const center = cellCenter(c, r, p);
+  for (const hole of state.holes) {
+    const dx = center.x - hole.x;
+    const dz = center.z - hole.z;
+    if (dx * dx + dz * dz <= hole.radius * hole.radius) return true;
+  }
+  return false;
+}
+
+function isCellSolid(c, r, p) {
+  if (c < 0 || r < 0 || c >= state.cols || r >= state.rows) return false;
+  return !isCellInHole(c, r, p);
+}
+
+function rebuild() {
+  const p = getParams();
+  const geometry = createTerrainGeometry(p);
+  geometry.computeVertexNormals();
+  geometry.computeBoundingBox();
+
+  if (terrainMesh) {
+    terrainMesh.geometry.dispose();
+    terrainMesh.material.dispose();
+    scene.remove(terrainMesh);
+  }
+
+  const material = new THREE.MeshStandardMaterial({
+    color: 0x2a2a2a,
+    roughness: 0.86,
+    metalness: 0.02,
+    side: THREE.DoubleSide
+  });
+
+  terrainMesh = new THREE.Mesh(geometry, material);
+  scene.add(terrainMesh);
+}
+
+function createTerrainGeometry(p) {
+  validateParams(p);
+
+  const positions = [];
+  const indices = [];
+  const top = [];
+  const bottom = [];
+
+  function addVertex(x, y, z) {
+    positions.push(x, y, z);
+    return positions.length / 3 - 1;
+  }
+
+  for (let r = 0; r <= state.rows; r++) {
+    top[r] = [];
+    bottom[r] = [];
+    for (let c = 0; c <= state.cols; c++) {
+      const pos = vertexPosition(c, r, p);
+      top[r][c] = addVertex(pos.x, pos.y, pos.z);
+      bottom[r][c] = addVertex(pos.x, 0, pos.z);
+    }
+  }
+
+  function addTopQuad(a, b, c, d) {
+    indices.push(a, c, b, b, c, d);
+  }
+
+  function addBottomQuad(a, b, c, d) {
+    indices.push(a, b, c, b, d, c);
+  }
+
+  function addSideQuad(topA, topB, bottomA, bottomB) {
+    indices.push(topA, bottomA, topB, topB, bottomA, bottomB);
+  }
+
+  for (let r = 0; r < state.rows; r++) {
+    for (let c = 0; c < state.cols; c++) {
+      if (!isCellSolid(c, r, p)) continue;
+
+      const ta = top[r][c];
+      const tb = top[r][c + 1];
+      const tc = top[r + 1][c];
+      const td = top[r + 1][c + 1];
+
+      const ba = bottom[r][c];
+      const bb = bottom[r][c + 1];
+      const bc = bottom[r + 1][c];
+      const bd = bottom[r + 1][c + 1];
+
+      addTopQuad(ta, tb, tc, td);
+      addBottomQuad(ba, bb, bc, bd);
+
+      if (!isCellSolid(c, r - 1, p)) addSideQuad(ta, tb, ba, bb);
+      if (!isCellSolid(c, r + 1, p)) addSideQuad(tc, td, bc, bd);
+      if (!isCellSolid(c - 1, r, p)) addSideQuad(ta, tc, ba, bc);
+      if (!isCellSolid(c + 1, r, p)) addSideQuad(tb, td, bb, bd);
+    }
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setIndex(indices);
+  return geometry;
+}
+
+function validateParams(p) {
+  const values = [p.width, p.depth, p.baseThickness, p.brushRadius, p.brushStrength, p.holeRadius, p.selectStep];
+  if (values.some((v) => !Number.isFinite(v))) throw new Error('存在无效参数');
+  if (p.width <= 0 || p.depth <= 0 || p.baseThickness <= 0) throw new Error('尺寸必须大于 0');
+  if (p.brushRadius <= 0 || p.holeRadius <= 0) throw new Error('半径必须大于 0');
+}
+
+function getPointerNDC(event) {
+  pointer.x = (event.clientX / window.innerWidth) * 2 - 1;
+  pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
+  return pointer;
+}
+
+function hitTerrain(event) {
+  if (!terrainMesh) return null;
+  getPointerNDC(event);
+  raycaster.setFromCamera(pointer, camera);
+  const hits = raycaster.intersectObject(terrainMesh, false);
+  if (!hits.length) return null;
+  return hits[0];
+}
+
+function onPointerDown(event) {
+  if (event.button !== 0) return;
+  if (event.target !== renderer.domElement) return;
+
+  if (state.tool === 'orbit') return;
+
+  event.preventDefault();
+  state.pointerDown = true;
+  renderer.domElement.setPointerCapture(event.pointerId);
+
+  if (state.tool === 'select') {
+    beginSelection(event);
+    return;
+  }
+
+  const hit = hitTerrain(event);
+  if (!hit) return;
+
+  if (state.tool === 'hole') {
+    saveHistory();
+    const p = getParams();
+    state.holes.push({ x: hit.point.x, z: hit.point.z, radius: p.holeRadius });
+    rebuild();
+    updateSelectionVisual();
+    return;
+  }
+
+  saveHistory();
+  applyBrush(hit.point, state.tool);
+}
+
+function onPointerMove(event) {
+  if (state.tool === 'orbit') return;
+
+  if (state.tool === 'select') {
+    if (state.pointerDown && state.selectionStart) updateSelectionBox(event);
+    return;
+  }
+
+  const hit = hitTerrain(event);
+  if (hit) {
+    const p = getParams();
+    brushRing.visible = true;
+    brushRing.position.set(hit.point.x, hit.point.y + 0.9, hit.point.z);
+    const radius = state.tool === 'hole' ? p.holeRadius : p.brushRadius;
+    brushRing.scale.set(radius, 1, radius);
+  } else {
+    brushRing.visible = false;
+  }
+
+  if (!state.pointerDown) return;
+  if (state.tool === 'hole') return;
+  if (!hit) return;
+
+  applyBrush(hit.point, state.tool);
+}
+
+function onPointerUp(event) {
+  if (state.tool === 'select' && state.pointerDown && state.selectionStart) {
+    finishSelection(event);
+  }
+  state.pointerDown = false;
+  state.selectionStart = null;
+  selectBox.style.display = 'none';
+
+  try {
+    renderer.domElement.releasePointerCapture(event.pointerId);
+  } catch (e) {
+    // 某些浏览器在未 capture 时会抛错，忽略即可。
+  }
+}
+
+function onPointerLeave() {
+  if (!state.pointerDown) brushRing.visible = false;
+}
+
+function applyBrush(point, mode) {
+  const p = getParams();
+  const radius = p.brushRadius;
+  const strength = p.brushStrength;
+  const r2 = radius * radius;
+  const old = state.heights;
+  let changed = false;
+
+  if (mode === 'smooth') {
+    const next = old.slice();
+    for (let r = 1; r < state.rows; r++) {
+      for (let c = 1; c < state.cols; c++) {
+        const pos = vertexPosition(c, r, p);
+        const dx = pos.x - point.x;
+        const dz = pos.z - point.z;
+        const dist2 = dx * dx + dz * dz;
+        if (dist2 > r2) continue;
+
+        const idx = vertexIndex(c, r);
+        const dist = Math.sqrt(dist2);
+        const falloff = smoothFalloff(dist / radius);
+        const avg = (
+          old[vertexIndex(c - 1, r)] + old[vertexIndex(c + 1, r)] +
+          old[vertexIndex(c, r - 1)] + old[vertexIndex(c, r + 1)] +
+          old[idx]
+        ) / 5;
+        next[idx] = THREE.MathUtils.lerp(old[idx], avg, Math.min(0.75, 0.08 * strength) * falloff);
+        changed = true;
+      }
+    }
+    if (changed) state.heights = next;
+  } else {
+    const sign = mode === 'raise' ? 1 : -1;
+    for (let r = 0; r <= state.rows; r++) {
+      for (let c = 0; c <= state.cols; c++) {
+        const pos = vertexPosition(c, r, p);
+        const dx = pos.x - point.x;
+        const dz = pos.z - point.z;
+        const dist2 = dx * dx + dz * dz;
+        if (dist2 > r2) continue;
+
+        const idx = vertexIndex(c, r);
+        const dist = Math.sqrt(dist2);
+        const falloff = smoothFalloff(dist / radius);
+        state.heights[idx] = Math.max(0, state.heights[idx] + sign * strength * falloff * 0.18);
+        changed = true;
+      }
+    }
+  }
+
+  if (changed) {
+    rebuild();
+    updateSelectionVisual();
+  }
+}
+
+function smoothFalloff(t) {
+  const x = THREE.MathUtils.clamp(1 - t, 0, 1);
+  return x * x * (3 - 2 * x);
+}
+
+function beginSelection(event) {
+  state.selectionStart = { x: event.clientX, y: event.clientY };
+  selectBox.style.left = `${event.clientX}px`;
+  selectBox.style.top = `${event.clientY}px`;
+  selectBox.style.width = '0px';
+  selectBox.style.height = '0px';
+  selectBox.style.display = 'block';
+}
+
+function updateSelectionBox(event) {
+  const s = state.selectionStart;
+  const left = Math.min(s.x, event.clientX);
+  const top = Math.min(s.y, event.clientY);
+  const width = Math.abs(event.clientX - s.x);
+  const height = Math.abs(event.clientY - s.y);
+  selectBox.style.left = `${left}px`;
+  selectBox.style.top = `${top}px`;
+  selectBox.style.width = `${width}px`;
+  selectBox.style.height = `${height}px`;
+}
+
+function finishSelection(event) {
+  updateSelectionBox(event);
+  const rect = selectBox.getBoundingClientRect();
+  selectVerticesInScreenRect(rect);
+  updateSelectionVisual();
+}
+
+function selectVerticesInScreenRect(rect) {
+  const p = getParams();
+  state.selected.fill(0);
+
+  const v = new THREE.Vector3();
+  let count = 0;
+
+  for (let r = 0; r <= state.rows; r++) {
+    for (let c = 0; c <= state.cols; c++) {
+      const pos = vertexPosition(c, r, p);
+      v.set(pos.x, pos.y, pos.z).project(camera);
+      if (v.z < -1 || v.z > 1) continue;
+
+      const sx = (v.x * 0.5 + 0.5) * window.innerWidth;
+      const sy = (-v.y * 0.5 + 0.5) * window.innerHeight;
+
+      if (sx >= rect.left && sx <= rect.right && sy >= rect.top && sy <= rect.bottom) {
+        state.selected[vertexIndex(c, r)] = 1;
+        count++;
+      }
+    }
+  }
+
+  $('status').textContent = `当前工具：框选，已选中 ${count} 个顶点`;
+}
+
+function updateSelectionVisual() {
+  if (selectionPoints) {
+    selectionPoints.geometry.dispose();
+    selectionPoints.material.dispose();
+    scene.remove(selectionPoints);
+    selectionPoints = null;
+  }
+
+  const p = getParams();
+  const positions = [];
+  for (let r = 0; r <= state.rows; r++) {
+    for (let c = 0; c <= state.cols; c++) {
+      const idx = vertexIndex(c, r);
+      if (!state.selected[idx]) continue;
+      const pos = vertexPosition(c, r, p);
+      positions.push(pos.x, pos.y + 1.0, pos.z);
+    }
+  }
+
+  if (!positions.length) return;
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  const material = new THREE.PointsMaterial({ color: 0xfacc15, size: 3.5, sizeAttenuation: true });
+  selectionPoints = new THREE.Points(geometry, material);
+  scene.add(selectionPoints);
+}
+
+function clearSelection() {
+  state.selected.fill(0);
+  updateSelectionVisual();
+  $('status').textContent = '已清空选区';
+}
+
+function selectedCount() {
+  let count = 0;
+  for (let i = 0; i < state.selected.length; i++) if (state.selected[i]) count++;
+  return count;
+}
+
+function applySelectionHeight(delta) {
+  if (!selectedCount()) {
+    $('status').textContent = '没有选区：请先选择“框选”并拖出一个区域';
+    return;
+  }
+  saveHistory();
+  for (let i = 0; i < state.heights.length; i++) {
+    if (state.selected[i]) state.heights[i] = Math.max(0, state.heights[i] + delta);
+  }
+  rebuild();
+  updateSelectionVisual();
+}
+
+function smoothSelection() {
+  if (!selectedCount()) {
+    $('status').textContent = '没有选区：请先选择“框选”并拖出一个区域';
+    return;
+  }
+  saveHistory();
+  const old = state.heights;
+  const next = old.slice();
+
+  for (let r = 1; r < state.rows; r++) {
+    for (let c = 1; c < state.cols; c++) {
+      const idx = vertexIndex(c, r);
+      if (!state.selected[idx]) continue;
+      next[idx] = (
+        old[vertexIndex(c - 1, r)] + old[vertexIndex(c + 1, r)] +
+        old[vertexIndex(c, r - 1)] + old[vertexIndex(c, r + 1)] +
+        old[idx]
+      ) / 5;
+    }
+  }
+
+  state.heights = next;
+  rebuild();
+  updateSelectionVisual();
+}
+
+function naturalizeTerrain() {
+  saveHistory();
+  const p = getParams();
+
+  for (let r = 0; r <= state.rows; r++) {
+    for (let c = 0; c <= state.cols; c++) {
+      const pos = vertexPosition(c, r, p);
+      const edgeX = Math.abs(pos.x) / (p.width / 2);
+      const edgeZ = Math.abs(pos.z) / (p.depth / 2);
+      const edgeFade = Math.max(0, 1 - Math.max(edgeX, edgeZ) * 0.85);
+      const n = Math.sin(pos.x * 0.065) * 0.7 + Math.cos(pos.z * 0.075) * 0.5 + Math.sin((pos.x + pos.z) * 0.035) * 0.5;
+      const idx = vertexIndex(c, r);
+      state.heights[idx] = Math.max(0, state.heights[idx] + n * 2.2 * edgeFade);
+    }
+  }
+
+  rebuild();
+  updateSelectionVisual();
+}
+
+function snapshot() {
+  return {
+    heights: state.heights.slice(),
+    holes: state.holes.map((h) => ({ ...h })),
+    selected: state.selected.slice()
+  };
+}
+
+function restore(snap) {
+  state.heights = snap.heights.slice();
+  state.holes = snap.holes.map((h) => ({ ...h }));
+  state.selected = snap.selected.slice();
+  rebuild();
+  updateSelectionVisual();
+}
+
+function saveHistory() {
+  state.history.push(snapshot());
+  if (state.history.length > 50) state.history.shift();
+  state.redo.length = 0;
+}
+
+function undo() {
+  if (!state.history.length) {
+    $('status').textContent = '没有可撤销的操作';
+    return;
+  }
+  state.redo.push(snapshot());
+  const snap = state.history.pop();
+  restore(snap);
+  $('status').textContent = '已撤销';
+}
+
+function redo() {
+  if (!state.redo.length) {
+    $('status').textContent = '没有可重做的操作';
+    return;
+  }
+  state.history.push(snapshot());
+  const snap = state.redo.pop();
+  restore(snap);
+  $('status').textContent = '已重做';
+}
+
+function resetTerrain() {
+  saveHistory();
+  state.heights = new Float32Array((state.cols + 1) * (state.rows + 1));
+  state.holes = [];
+  state.selected = new Uint8Array((state.cols + 1) * (state.rows + 1));
+  rebuild();
+  updateSelectionVisual();
+  $('status').textContent = '已重置为平整地台';
+}
+
+function exportSTL() {
+  if (!terrainMesh) return;
+  terrainMesh.updateMatrixWorld(true);
+
+  const exporter = new STLExporter();
+  const stl = exporter.parse(terrainMesh, { binary: false });
+  const blob = new Blob([stl], { type: 'model/stl' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'aquascape-sculpted-terrain.stl';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(a.href);
+  $('status').textContent = '已导出 STL';
+}
+
+function onResize() {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+}
+
+function runTests() {
+  const output = [];
+  function test(name, fn) {
+    try {
+      fn();
+      output.push(`✅ ${name}`);
+    } catch (err) {
+      output.push(`❌ ${name}: ${err.message}`);
+      console.error(err);
+    }
+  }
+
+  test('Three.js 模块加载成功', () => {
+    if (!THREE || !THREE.BufferGeometry) throw new Error('THREE 未正确加载');
+  });
+
+  test('OrbitControls 模块加载成功', () => {
+    if (typeof OrbitControls !== 'function') throw new Error('OrbitControls 未正确加载');
+  });
+
+  test('STLExporter 模块加载成功', () => {
+    if (typeof STLExporter !== 'function') throw new Error('STLExporter 未正确加载');
+  });
+
+  test('默认地台几何体可生成', () => {
+    const g = createTerrainGeometry({
+      width: 180,
+      depth: 110,
+      baseThickness: 10,
+      brushRadius: 20,
+      brushStrength: 5,
+      holeRadius: 18,
+      selectStep: 8
+    });
+    const pos = g.getAttribute('position');
+    if (!pos || pos.count <= 0) throw new Error('顶点为空');
+    if (!g.index || g.index.count <= 0) throw new Error('索引为空');
+    g.dispose();
+  });
+
+  test('添加圆洞后几何体仍可生成', () => {
+    const oldHoles = state.holes.map((h) => ({ ...h }));
+    state.holes.push({ x: 0, z: 0, radius: 16 });
+    const g = createTerrainGeometry({
+      width: 180,
+      depth: 110,
+      baseThickness: 10,
+      brushRadius: 20,
+      brushStrength: 5,
+      holeRadius: 18,
+      selectStep: 8
+    });
+    if (!g.index || g.index.count <= 0) throw new Error('开洞后索引为空');
+    g.dispose();
+    state.holes = oldHoles;
+  });
+
+  test('高度修改后几何体仍可生成', () => {
+    const old = state.heights.slice();
+    state.heights[vertexIndex(Math.floor(state.cols / 2), Math.floor(state.rows / 2))] = 20;
+    const g = createTerrainGeometry({
+      width: 180,
+      depth: 110,
+      baseThickness: 10,
+      brushRadius: 20,
+      brushStrength: 5,
+      holeRadius: 18,
+      selectStep: 8
+    });
+    if (!g.index || g.index.count <= 0) throw new Error('高度修改后索引为空');
+    g.dispose();
+    state.heights = old;
+  });
+
+  $('testResult').textContent = output.join('\n');
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+}
+</script>
+</body>
+</html>
