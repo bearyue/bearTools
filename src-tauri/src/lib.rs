@@ -699,11 +699,29 @@ fn escape_powershell_single_quotes(value: &str) -> String {
 }
 
 #[cfg(target_os = "windows")]
+fn build_powershell_path_bootstrap() -> String {
+    [
+        "$pathSegments = @()",
+        "foreach ($rawPath in @([Environment]::GetEnvironmentVariable('Path', 'Machine'), [Environment]::GetEnvironmentVariable('Path', 'User'), $env:Path)) {",
+        "  if ($rawPath) { $pathSegments += ($rawPath -split ';') }",
+        "}",
+        "if ($env:LOCALAPPDATA) {",
+        "  $pathSegments += (Join-Path $env:LOCALAPPDATA 'Kiro-Cli')",
+        "  $pathSegments += (Join-Path $env:LOCALAPPDATA 'Programs\\Kiro\\bin')",
+        "}",
+        "$pathSegments = $pathSegments | ForEach-Object { [Environment]::ExpandEnvironmentVariables($_.Trim()) } | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -Unique",
+        "$env:Path = ($pathSegments -join ';')",
+    ]
+    .join("; ")
+}
+
+#[cfg(target_os = "windows")]
 fn build_powershell_script(path: &str, title: &str, command: &str) -> String {
     let escaped_path = escape_powershell_single_quotes(path);
     let escaped_title = escape_powershell_single_quotes(title);
 
     let mut statements = vec![
+        build_powershell_path_bootstrap(),
         format!("Set-Location -LiteralPath '{}'", escaped_path),
         format!("$host.UI.RawUI.WindowTitle='{}'", escaped_title),
     ];
@@ -762,8 +780,7 @@ fn escape_shell_single_quotes(value: &str) -> String {
     value.replace('\'', "'\"'\"'")
 }
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-#[tauri::command]
-fn jxlog_validate_runtime(
+fn validate_jxlog_runtime(
     python_command: String,
     fetch_script_path: String,
 ) -> Result<JxLogRuntimeValidation, String> {
@@ -785,8 +802,7 @@ fn jxlog_validate_runtime(
     })
 }
 
-#[tauri::command]
-fn jxlog_load_configuration(fetch_script_path: String) -> Result<JxLogConfigBundle, String> {
+fn load_jxlog_configuration(fetch_script_path: String) -> Result<JxLogConfigBundle, String> {
     let fetch_script_path = require_non_empty(&fetch_script_path, "fetch_log.py 路径")?;
     let (script_root, config_ini_path, project_map_path) = jxlog_derive_paths(&fetch_script_path)?;
     let profiles = if config_ini_path.is_file() {
@@ -807,8 +823,7 @@ fn jxlog_load_configuration(fetch_script_path: String) -> Result<JxLogConfigBund
     })
 }
 
-#[tauri::command]
-fn jxlog_save_configuration(
+fn save_jxlog_configuration(
     fetch_script_path: String,
     profiles: Vec<JxLogProfile>,
     projects: Vec<JxLogProjectMapping>,
@@ -845,6 +860,34 @@ fn jxlog_save_configuration(
         profiles: normalized_profiles,
         projects,
     })
+}
+
+#[tauri::command]
+async fn jxlog_validate_runtime(
+    python_command: String,
+    fetch_script_path: String,
+) -> Result<JxLogRuntimeValidation, String> {
+    spawn_blocking(move || validate_jxlog_runtime(python_command, fetch_script_path))
+        .await
+        .map_err(|error| format!("校验 jxLog 运行时失败: {error}"))?
+}
+
+#[tauri::command]
+async fn jxlog_load_configuration(fetch_script_path: String) -> Result<JxLogConfigBundle, String> {
+    spawn_blocking(move || load_jxlog_configuration(fetch_script_path))
+        .await
+        .map_err(|error| format!("加载 jxLog 配置失败: {error}"))?
+}
+
+#[tauri::command]
+async fn jxlog_save_configuration(
+    fetch_script_path: String,
+    profiles: Vec<JxLogProfile>,
+    projects: Vec<JxLogProjectMapping>,
+) -> Result<JxLogConfigBundle, String> {
+    spawn_blocking(move || save_jxlog_configuration(fetch_script_path, profiles, projects))
+        .await
+        .map_err(|error| format!("保存 jxLog 配置失败: {error}"))?
 }
 
 #[tauri::command]
